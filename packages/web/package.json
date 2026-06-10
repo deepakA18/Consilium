@@ -1,0 +1,12 @@
+{
+  "name": "@consilium/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "echo \"web: scaffolded in Step 9 (Next.js App Router)\""
+  },
+  "dependencies": {
+    "@consilium/shared": "workspace:*"
+  }
+}

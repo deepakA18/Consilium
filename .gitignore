@@ -1,0 +1,34 @@
+# deps
+node_modules/
+.pnp.*
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# builds
+dist/
+build/
+out/
+.next/
+*.tsbuildinfo
+
+# foundry
+packages/contracts/out/
+packages/contracts/cache/
+packages/contracts/broadcast/
+
+# logs
+*.log
+npm-debug.log*
+bun-debug.log*
+
+# misc
+.DS_Store
+coverage/
+.vscode/
+.idea/
+
+# generated demo artifacts
+packages/web/public/cards/*.png

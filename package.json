@@ -1,0 +1,29 @@
+{
+  "name": "consilium",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Consilium — a live, adversarial multi-agent prediction market on Base.",
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "workspaces": [
+    "packages/shared",
+    "packages/agents",
+    "packages/web"
+  ],
+  "scripts": {
+    "build": "bun run --filter '*' build",
+    "typecheck": "bun run --filter '*' typecheck",
+    "contracts:build": "forge build --root packages/contracts",
+    "contracts:test": "forge test -vvv --root packages/contracts",
+    "contracts:deploy": "forge script packages/contracts/script/Deploy.s.sol --root packages/contracts --broadcast",
+    "venice:smoke": "bun run --filter '@consilium/agents' venice:smoke",
+    "delegation:smoke": "bun run --filter '@consilium/agents' delegation:smoke",
+    "x402:smoke": "bun run --filter '@consilium/agents' x402:smoke",
+    "oneshot:smoke": "bun run --filter '@consilium/agents' oneshot:smoke",
+    "round:run": "bun run --filter '@consilium/agents' round:run"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
+}
