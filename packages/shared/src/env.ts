@@ -20,8 +20,13 @@ const privateKey = z
 
 const envSchema = z.object({
   // --- Chains ---
+  // PRIVATE, server-side only. May contain an API key (e.g. QuickNode). Must NEVER be exposed
+  // to the browser — do not give it a NEXT_PUBLIC_ alias. Read it via getServerRpcUrl().
   BASE_SEPOLIA_RPC_URL: z.string().url().default("https://sepolia.base.org"),
+  // PUBLIC, browser-safe (no key). Used by client-side viem clients; safe in the network tab.
+  BASE_SEPOLIA_PUBLIC_RPC_URL: z.string().url().default("https://sepolia.base.org"),
   BASE_MAINNET_RPC_URL: z.string().url().default("https://mainnet.base.org"),
+  BASE_MAINNET_PUBLIC_RPC_URL: z.string().url().default("https://mainnet.base.org"),
   CHAIN_ID: z.coerce.number().int().refine((n) => n === 84532 || n === 8453, {
     message: "CHAIN_ID must be 84532 (Base Sepolia) or 8453 (Base mainnet)",
   }).default(84532),
@@ -60,7 +65,13 @@ const envSchema = z.object({
 export type Env = z.infer<typeof envSchema>;
 
 function loadEnv(): Env {
-  const parsed = envSchema.safeParse(process.env);
+  // Treat empty-string env vars (e.g. `WATCHED_WALLET=` in .env) as absent, so `.optional()`
+  // fields fall through to undefined / their default instead of failing format validation.
+  const cleaned: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && value !== "") cleaned[key] = value;
+  }
+  const parsed = envSchema.safeParse(cleaned);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
