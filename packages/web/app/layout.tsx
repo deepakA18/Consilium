@@ -1,20 +1,27 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
-const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono", display: "swap" });
+// One distinctive family across the app; hierarchy comes from weight, not multiple typefaces.
+const jakarta = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+  weight: ["400", "500", "600", "700", "800"],
+});
 
 export const metadata: Metadata = {
-  title: "Consilium — Live Adversarial Agent Market",
+  title: "Consilium · Agent-Run Liquidation-Risk Oracle",
   description:
-    "A live, adversarial multi-agent prediction market on Base. Every figure traces to a real onchain transaction.",
+    "A live, adversarial multi-agent liquidation-risk oracle. Every figure traces to an onchain transaction or Chainlink feed read.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}>{children}</body>
+      <body className={`${jakarta.variable} font-sans antialiased`}>
+        {children}
+      </body>
     </html>
   );
 }

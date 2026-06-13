@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { txUrl, addressUrl, shortHash, shortAddr } from "@/lib/explorer";
 import type { Side, EventStatus } from "@/lib/round-data";
 
-/** A monospace tx-hash chip that links to Basescan. Verification-first: every figure with a tx
+/** A tx-hash chip that links to Basescan. Verification-first: every figure with a tx
  *  gets one of these. */
 export function TxLink({ hash, label, className }: { hash: string; label?: string; className?: string }) {
   return (
@@ -12,7 +12,7 @@ export function TxLink({ hash, label, className }: { hash: string; label?: strin
       target="_blank"
       rel="noreferrer"
       className={cn(
-        "inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground",
+        "inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground",
         className,
       )}
     >
@@ -28,7 +28,7 @@ export function AddrLink({ address, className }: { address: string; className?: 
       href={addressUrl(address)}
       target="_blank"
       rel="noreferrer"
-      className={cn("inline-flex items-center gap-1 font-mono text-foreground/80 hover:text-foreground", className)}
+      className={cn("inline-flex items-center gap-1 text-foreground/80 hover:text-foreground", className)}
     >
       {shortAddr(address)}
       <ArrowUpRight className="size-3 opacity-50" />
@@ -56,7 +56,7 @@ export function StatusPill({ status, children }: { status: EventStatus; children
   );
 }
 
-export function SideTag({ side, className }: { side: Side; className?: string }) {
+export function SideTag({ side, label, className }: { side: Side; label?: string; className?: string }) {
   return (
     <span
       className={cn(
@@ -65,7 +65,7 @@ export function SideTag({ side, className }: { side: Side; className?: string })
         className,
       )}
     >
-      {side}
+      {label ?? side}
     </span>
   );
 }
@@ -90,7 +90,7 @@ export function Stat({
   return (
     <div>
       <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={cn("mt-0.5 font-mono text-sm text-foreground", valueClass)}>{value}</div>
+      <div className={cn("mt-0.5 text-sm text-foreground", valueClass)}>{value}</div>
       {sub ? <div className="mt-0.5 text-[11px] text-muted-foreground">{sub}</div> : null}
     </div>
   );

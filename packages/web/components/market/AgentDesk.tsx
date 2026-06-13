@@ -1,48 +1,47 @@
-import { AddrLink, SideTag, TxLink, Stat } from "@/components/ui/bits";
+import { AddrLink, TxLink } from "@/components/ui/bits";
 import { cn } from "@/lib/utils";
-import type { AgentDeskVM } from "@/lib/round-data";
+import { SIDE_LABEL, type AgentDeskVM } from "@/lib/round-data";
 
-/** A trading desk, not a generic card. Stake size visually = confidence (the costly signal). */
-export function AgentDesk({ agent }: { agent: AgentDeskVM }) {
-  const accent = agent.side === "YES" ? "text-yes" : "text-no";
-  const bar = agent.side === "YES" ? "bg-yes" : "bg-no";
+/** A position card. One focal number (the stake), the thesis, and a quiet footer. The signal/tx
+ *  detail lives in the Evidence card and the Activity feed — kept off this card on purpose. */
+export function AgentDesk({ agent, won }: { agent: AgentDeskVM; won?: boolean }) {
+  const yes = agent.side === "YES";
+  const accent = yes ? "text-yes" : "text-no";
+  const evidenceUsdc = agent.buys.reduce((s, b) => s + b.priceUsdc, 0);
+
   return (
-    <div className="flex flex-col rounded-xl border border-border bg-card p-5">
+    <div
+      className={cn(
+        "card-soft relative flex h-full flex-col overflow-hidden p-7",
+        won && (yes ? "ring-1 ring-yes/40" : "ring-1 ring-no/40"),
+      )}
+    >
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-bold tracking-widest">{agent.label}</span>
-          <SideTag side={agent.side} />
+        <div className="flex items-baseline gap-2.5">
+          <span className="text-sm font-semibold tracking-wide">{agent.label}</span>
+          <span className={cn("text-[13px] font-medium", accent)}>{SIDE_LABEL[agent.side]}</span>
         </div>
-        <AddrLink address={agent.address} className="text-[11px]" />
+        {won ? (
+          <span className={cn("text-[13px] font-medium", accent)}>Won</span>
+        ) : (
+          <AddrLink address={agent.address} className="text-xs" />
+        )}
       </div>
 
-      <div className="mt-4 grid grid-cols-3 gap-3">
-        <Stat label="Budget cap" value={`${agent.capUsdc} USDC`} />
-        <Stat label="Evidence" value={`${agent.evidenceUsdc.toFixed(2)} USDC`} sub={`${agent.buys} buy${agent.buys === 1 ? "" : "s"}`} />
-        <Stat label="Position" value={<span className={cn("font-bold", accent)}>{agent.side}</span>} />
-      </div>
-
-      <div className="mt-4">
-        <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Current thesis</div>
-        <p className="mt-1 text-sm leading-snug text-foreground/90">{agent.thesis}</p>
-      </div>
-
-      <div className="mt-4">
-        <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-          <span>Confidence</span>
-          <span className={cn("font-mono", accent)}>{agent.confidence}%</span>
-        </div>
-        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
-          <div className={cn("h-full", bar)} style={{ width: `${agent.confidence}%` }} />
+      {/* focal: stake */}
+      <div className="mt-8">
+        <div className="text-[13px] text-muted-foreground">Staked</div>
+        <div className={cn("mt-1 text-5xl font-semibold tabular-nums leading-none", accent)}>
+          {agent.stakeUsdc}
+          <span className="ml-2 text-base font-medium text-muted-foreground">USDC</span>
         </div>
       </div>
 
-      {/* Stake — large; the size IS the costly signal. */}
-      <div className="mt-5 flex items-end justify-between border-t border-border pt-4">
-        <div>
-          <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Stake</div>
-          <div className={cn("font-mono text-3xl font-bold tabular-nums", accent)}>{agent.stakeUsdc} USDC</div>
-        </div>
+      {/* quiet footer */}
+      <div className="mt-auto flex items-center justify-between pt-8 text-[13px]">
+        <span className="text-muted-foreground">
+          <span className={cn("font-medium", accent)}>{agent.confidence}%</span> confidence · ${evidenceUsdc.toFixed(2)} evidence
+        </span>
         <TxLink hash={agent.stakeTx} label="stake tx" />
       </div>
     </div>

@@ -12,9 +12,12 @@ const statusLabel: Record<TimelineEventVM["status"], string> = {
 /** GitHub activity feed meets Basescan. Every row: time · actor · what · amount · status · tx. */
 export function EventTimeline({ events }: { events: TimelineEventVM[] }) {
   return (
-    <section className="rounded-xl border border-border bg-card p-5">
-      <SectionLabel>Event timeline</SectionLabel>
-      <ol className="relative">
+    <section className="rounded-2xl border border-border bg-card p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <SectionLabel>Activity</SectionLabel>
+        <span className="text-[10px] text-muted-foreground">{events.length} events</span>
+      </div>
+      <ol className="relative max-h-[70vh] overflow-y-auto pr-1">
         {events.map((e, i) => {
           const reverted = e.status === "reverted";
           return (
@@ -31,14 +34,14 @@ export function EventTimeline({ events }: { events: TimelineEventVM[] }) {
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-[11px] text-muted-foreground">{e.time}</span>
+                  <span className="text-[11px] text-muted-foreground">{e.time}</span>
                   <StatusPill status={e.status}>{statusLabel[e.status]}</StatusPill>
                 </div>
                 <div className={cn("mt-0.5 text-sm leading-snug", reverted && "text-no")}>
                   <span className="font-semibold">{e.actor}</span>{" "}
                   <span className={cn(!reverted && "text-foreground/85")}>{e.text}</span>
                   {e.amountUsdc != null && (
-                    <span className="ml-1 font-mono text-foreground">· {e.amountUsdc} USDC</span>
+                    <span className="ml-1 text-foreground">· {e.amountUsdc} USDC</span>
                   )}
                 </div>
                 {e.txHash && <TxLink hash={e.txHash} className="mt-1" />}

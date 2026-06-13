@@ -43,11 +43,11 @@
 }
 
 .dark {
-  --background: oklch(0.12 0 0);
+  --background: oklch(0.105 0 0);
   --foreground: oklch(0.96 0 0);
-  --card: oklch(0.15 0 0);
+  --card: oklch(0.17 0 0);
   --card-foreground: oklch(0.96 0 0);
-  --popover: oklch(0.17 0 0);
+  --popover: oklch(0.19 0 0);
   --popover-foreground: oklch(0.96 0 0);
   --primary: oklch(0.97 0 0);
   --primary-foreground: oklch(0.15 0 0);
@@ -103,7 +103,7 @@
   --color-reject: var(--reject);
 
   --font-sans: var(--font-sans);
-  --font-mono: var(--font-mono);
+  --font-display: var(--font-sans);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -131,4 +131,114 @@
 }
 .consilium-flow {
   animation: consilium-flow 2.4s linear infinite;
+}
+
+/* ---- Landing hero motion ---- */
+
+/* slow vertical bob for floating glass cards */
+@keyframes float-card {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+.float-card { animation: float-card 7s ease-in-out infinite; }
+.float-card-slow { animation: float-card 9s ease-in-out infinite; }
+
+/* shimmering gradient sweep across the headline */
+@keyframes text-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+.text-shimmer {
+  background: linear-gradient(
+    100deg,
+    oklch(0.78 0 0) 0%,
+    oklch(0.78 0 0) 38%,
+    oklch(1 0 0) 50%,
+    oklch(0.78 0 0) 62%,
+    oklch(0.78 0 0) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: text-shimmer 6s linear infinite;
+}
+
+/* soft pulsing aura behind the CTA / live dot */
+@keyframes aura {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.06); }
+}
+.aura { animation: aura 3.2s ease-in-out infinite; }
+
+/* fade/slide entrance, used with inline animation-delay */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.rise-in { opacity: 0; animation: rise-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+
+/* thin scanning line for the meters */
+@keyframes meter-fill {
+  from { width: 0%; }
+}
+.meter-fill { animation: meter-fill 1.6s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+
+/* ---- Market dashboard light theme (iBanKo-style): gray page, white cards, black hero ---- */
+.theme-light {
+  --background: oklch(0.965 0 0);
+  --foreground: oklch(0.18 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0 0);
+  --primary: oklch(0.18 0 0);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.95 0 0);
+  --secondary-foreground: oklch(0.2 0 0);
+  --muted: oklch(0.96 0 0);
+  --muted-foreground: oklch(0.48 0 0);
+  --accent: oklch(0.94 0 0);
+  --accent-foreground: oklch(0.18 0 0);
+  --border: oklch(0.91 0 0);
+  --input: oklch(0.96 0 0);
+  --ring: oklch(0.7 0 0);
+  --yes: oklch(0.55 0.15 155);
+  --no: oklch(0.55 0.22 22);
+  --pending: oklch(0.62 0.13 75);
+  color: var(--foreground);
+}
+
+/* ---- soft, elevated surfaces (crafted dashboard feel) ---- */
+.card-soft {
+  border-radius: 1.5rem;
+  background-color: var(--card);
+  border: 1px solid oklch(1 0 0 / 0.05);
+  box-shadow: inset 0 1px 0 0 oklch(1 0 0 / 0.04), 0 18px 44px -26px oklch(0 0 0 / 0.85);
+}
+/* light-theme card: subtle dark border + soft ambient shadow */
+.theme-light .card-soft {
+  border: 1px solid oklch(0 0 0 / 0.07);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.04), 0 14px 30px -20px oklch(0 0 0 / 0.18);
+}
+.pill-soft {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 9999px;
+  background-color: var(--secondary);
+  padding: 0.4rem 0.8rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+/* flowing dashes along graph / chart strokes */
+@keyframes dash-move { to { stroke-dashoffset: -200; } }
+.dash-flow { stroke-dasharray: 3 7; animation: dash-move 9s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .float-card, .float-card-slow, .text-shimmer, .aura, .rise-in, .meter-fill, .consilium-flow, .dash-flow {
+    animation: none !important;
+  }
+  .rise-in { opacity: 1; }
 }
