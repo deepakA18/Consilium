@@ -27,6 +27,9 @@ packages/contracts/lib/
 npm-debug.log*
 bun-debug.log*
 
+# internal build spec — keep out of git (planning/source-of-truth doc, not shipped)
+CONSOLIUM_BUILD.MD
+
 # misc
 .brand-preview/
 next-env.d.ts
