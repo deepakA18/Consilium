@@ -8,8 +8,9 @@ import { env } from "./env.ts";
  * IMPORTANT: this file deliberately does NOT contain 1Shot relayer payment tokens, the
  * `feeCollector`, or `targetAddress`. Those are discovered at runtime from
  * `relayer_getCapabilities` (see CONSOLIUM_BUILD.MD §8) and must never be hardcoded.
- * The same goes for Venice model ids — fetch the live list. The only token address here is
- * USDC, supplied via env after confirming the current test token from Circle's faucet.
+ * The same goes for the reasoning LLM model id — keep it in env, verify a current one at build
+ * time. The only token address here is USDC, supplied via env after confirming the current test
+ * token from Circle's faucet.
  */
 
 export const SUPPORTED_CHAIN_IDS = [84532, 8453] as const;

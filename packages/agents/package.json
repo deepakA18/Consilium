@@ -5,14 +5,37 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit"
+    "build": "tsc --noEmit",
+    "reasoning:smoke": "bun --env-file=../../.env run src/smoke/reasoning.ts",
+    "signals:smoke": "bun --env-file=../../.env run src/smoke/signals.ts",
+    "feed:smoke": "bun --env-file=../../.env run src/smoke/feed.ts",
+    "delegation:smoke": "bun --env-file=../../.env run src/smoke/delegation.ts",
+    "x402:smoke": "bun --env-file=../../.env run src/smoke/x402.ts",
+    "keys:status": "bun --env-file=../../.env run src/smoke/keys.ts",
+    "accounts:upgrade": "bun --env-file=../../.env run src/smoke/upgrade-accounts.ts",
+    "oneshot:smoke": "bun --env-file=../../.env run src/smoke/oneshot.ts",
+    "relay:stake": "bun --env-file=../../.env run src/smoke/relay-stake.ts",
+    "round:run": "bun --env-file=../../.env run src/roundRunner.ts",
+    "demo:overcap": "bun --env-file=../../.env run src/smoke/overcap.ts"
   },
   "dependencies": {
     "@consilium/shared": "workspace:*",
+    "@metamask/smart-accounts-kit": "^1.6.0",
+    "@metamask/x402": "^0.2.0",
+    "@noble/ed25519": "^3.1.0",
+    "@x402/core": "^2.14.0",
+    "@x402/evm": "^2.14.0",
+    "@x402/express": "^2.14.0",
+    "@x402/fetch": "^2.14.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "safe-stable-stringify": "^2.5.0",
     "viem": "^2.21.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "typescript": "^5.6.0"
   }
 }

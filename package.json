@@ -17,11 +17,14 @@
     "contracts:build": "forge build --root packages/contracts",
     "contracts:test": "forge test -vvv --root packages/contracts",
     "contracts:deploy": "forge script packages/contracts/script/Deploy.s.sol --root packages/contracts --broadcast",
-    "venice:smoke": "bun run --filter '@consilium/agents' venice:smoke",
+    "reasoning:smoke": "bun run --filter '@consilium/agents' reasoning:smoke",
+    "rpc:smoke": "bun run --filter '@consilium/agents' rpc:smoke",
     "delegation:smoke": "bun run --filter '@consilium/agents' delegation:smoke",
     "x402:smoke": "bun run --filter '@consilium/agents' x402:smoke",
     "oneshot:smoke": "bun run --filter '@consilium/agents' oneshot:smoke",
-    "round:run": "bun run --filter '@consilium/agents' round:run"
+    "round:run": "bun run --filter '@consilium/agents' round:run",
+    "keys:status": "bun run --filter '@consilium/agents' keys:status",
+    "accounts:upgrade": "bun run --filter '@consilium/agents' accounts:upgrade"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14"

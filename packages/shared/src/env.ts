@@ -46,9 +46,22 @@ const envSchema = z.object({
   BEAR_PRIVATE_KEY: privateKey.optional(),
   RESEARCH_PRIVATE_KEY: privateKey.optional(),
 
-  // --- Venice ---
-  VENICE_API_KEY: z.string().min(1).optional(),
-  VENICE_BASE_URL: z.string().url().default("https://api.venice.ai/api/v1"),
+  // --- Reasoning LLM (free / cheap, OpenAI-compatible — NOT track-scored) ---
+  LLM_PROVIDER: z.string().default("groq"),
+  LLM_BASE_URL: z.string().url().default("https://api.groq.com/openai/v1"),
+  LLM_API_KEY: z.string().min(1).optional(),
+  LLM_MODEL: z.string().default("llama-3.3-70b-versatile"),
+
+  // --- PIVOT: solvency/liquidation-risk oracle — position + signal/resolution config ---
+  // SIGNAL_RPC_URL reads position P's real Aave signals on mainnet; DEMO_CHAIN_RPC_URL reads the
+  // Chainlink feed + market on the demo chain (Base Sepolia).
+  SIGNAL_RPC_URL: z.string().url().default("https://ethereum-rpc.publicnode.com"),
+  DEMO_CHAIN_RPC_URL: z.string().url().default("https://sepolia.base.org"),
+  POSITION_ADDRESS: hexAddress.optional(), // mainnet Aave v3 borrower P
+  AAVE_POOL_ADDRESS: hexAddress.optional(), // Aave v3 Pool on P's chain
+  COLLATERAL_TOKEN: hexAddress.optional(), // P's collateral (its price triggers liquidation)
+  PRICE_FEED_ADDRESS: hexAddress.optional(), // Chainlink collateral/USD feed on the demo chain
+  SEQUENCER_UPTIME_FEED: hexAddress.optional(), // Chainlink L2 sequencer feed (none on Base Sepolia)
 
   // --- 1Shot relayer ---
   ONESHOT_RELAYER_URL: z.string().url().default("https://relayer.1shotapi.com/relayers"),
@@ -56,7 +69,12 @@ const envSchema = z.object({
   WEBHOOK_PORT: z.coerce.number().int().positive().default(8787),
 
   // --- x402 ---
-  X402_FACILITATOR_URL: z.string().url().default("https://x402.org/facilitator"),
+  // ERC-7710 delegation settlement runs through MetaMask's facilitator (tx-sentinel), NOT the
+  // stock x402.org facilitator (which only does EIP-3009/permit2). Network-specific URL.
+  X402_FACILITATOR_URL: z
+    .string()
+    .url()
+    .default("https://tx-sentinel-base-sepolia.api.cx.metamask.io/platform/v2/x402"),
 
   // --- Deployed contract ---
   MARKET_ADDRESS: hexAddress.optional(),

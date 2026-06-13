@@ -3,47 +3,92 @@
 > **You (Claude Code) are building this end to end. This file is the source of truth.**
 > Read the whole file before writing any code. The API details here were verified against
 > live docs in June 2026 — **trust them over your training data**, which is stale for
-> `@metamask/smart-accounts-kit`, the 1Shot relayer, and Venice. When in doubt, fetch the
-> doc URLs cited inline.
+> `@metamask/smart-accounts-kit` and the 1Shot relayer. When in doubt, fetch the doc URLs cited inline.
+>
+> **Tooling note (as built):** this repo uses **bun** (workspaces + scripts + TS runtime), not pnpm.
+> The local mock token is **`CUSDC` (Consilium USDC)**, not `MockUSDC`. Markets are created through a
+> permissionless **`ConsiliumMarketFactory`**. Smart accounts use **EIP-7702** (`Stateless7702`, EOA
+> upgraded in place — address == EOA), not Hybrid. x402 ERC-7710 settlement runs through **MetaMask's
+> facilitator** (tx-sentinel), not x402.org. RPC config is split into a PRIVATE server endpoint and a
+> PUBLIC browser-safe one (§3). Agent reasoning runs on **Venice** (bonus, not pillar). These
+> reconciliations are reflected throughout.
+>
+> **PIVOT status (read this).** v1 was built and proven live against a "watched-wallet USDC balance ≥
+> threshold" question. We are pivoting the **question + resolution** to a **solvency/liquidation-risk
+> oracle** (§0). What **carries over unchanged** (built + verified live): the delegation chain (3-level,
+> 7702), x402 evidence settlement, the 1Shot relayed stake, the over-cap enforcer revert, the push-model
+> market + factory, the dashboard shell. What **changes**: the market's *resolution* (Chainlink price
+> feed + L2 sequencer guard + `poke()` instead of `balanceOf`), the sold *signals* (Aave HF / price
+> headroom / DEX depth instead of a balance read), the round question, and UI copy. Sections below state
+> "as built" vs "to rework" per area.
 
 ---
 
 ## 0. What Consilium is (and why it must be REAL)
 
-Consilium is a **live, adversarial multi-agent prediction market**. Two agents with
-independently-funded, cryptographically-scoped USDC budgets take opposite sides of one
-resolvable question, **buy evidence from a research agent** (paying per call), and the
-market resolves onchain. The market price *is* the coordination mechanism — coordination
-emerges from a market, not from a top-down orchestration tree.
+Consilium is a **live, agent-run solvency-risk oracle** built as an adversarial prediction market. For a
+real onchain lending position, two agents with independently-funded, cryptographically-scoped USDC
+budgets take opposite sides of "will this position become liquidatable within window `W`," each **buying
+real onchain risk signals** to back its view (paying per call). The market price they produce is a **live,
+money-backed probability of liquidation** — a priced information good that downstream consumers (liquidator
+bots, risk dashboards, leveraged treasuries, other agents) can pay to read over x402.
 
-This project competes against other hackathon submissions (notably "Intento") that **fake
-their dashboards**: their UI shows "data purchased, confidence 0.87" as a static timeline
-label while the agents are marked Disabled and the numbers are hardcoded. **Our entire edge
-is that everything visible in our demo is a real onchain event.** If you find yourself
-tempted to hardcode a number, stub a transaction, or render a success state that isn't
-backed by a real tx hash — STOP. That is the exact failure mode we are beating. Every
-status in the UI must trace to a real Base Sepolia transaction or a real 1Shot webhook
-event.
+**Why this is a real product, not a toy market.** "Will *this specific* borrower position get liquidated in
+the next hour" is a narrow, per-position, fast-moving question that no liquid human market ever forms around
+— there are millions of such positions. Only cheap, autonomous, capped agents can stand up a liquid
+micro-market per position. The cap is *load-bearing for the usefulness*: it bounds how much any single agent
+can skew the published number, so confidence is manipulation-resistant up to the agents' bonded stakes. Risk
+monitoring is a real line-item protocols pay for; Consilium produces that signal in an agent-native way.
+
+**Why the produced number means something (not confident nonsense).** Agents read genuine, interacting
+risk-engine signals from a **real mainnet position** — not vibes:
+- current **health factor** + collateral/debt composition (Aave v3 `getUserAccountData`),
+- **price headroom**: how far the collateral must fall to hit the liquidation level (liquidation threshold + current price),
+- **exit liquidity**: DEX depth for the collateral (can a liquidation clear cleanly or cascade).
+Judgment over the *interaction* of these is where an agent adds value — which is exactly why a market
+(costly signals) beats a single model's claimed number.
+
+**Competitive principle: radical verifiability.** Everything visible in the demo is a real onchain event a
+judge can click through to an explorer. Many submissions describe rich flows but show UI numbers that don't
+trace to a transaction; some lean on simulated or "feasibility-probe" integrations. We are the opposite. If
+you are ever tempted to hardcode a number, stub a transaction, or render a success state not backed by a real
+tx hash — STOP. Every status in the UI must trace to a real Base Sepolia transaction, a real Chainlink feed
+read, or a real 1Shot webhook event.
 
 ### The two demo money-moments (these win the tracks)
-1. **Live adversarial purchase**: Bull and Bear agents each pay the research agent real USDC
-   (x402 + ERC-7710) for the same balance-read, settled onchain. The amount each commits is
-   a *costly confidence signal*.
-2. **The revert**: an agent attempts to **stake more than its redelegated budget**. The
-   transaction **reverts at the `ERC20TransferAmount` caveat enforcer** with a real failed
-   tx hash. No app-code guard rejected it — the chain did. This is the irrefutable proof
-   that the cap is structural, not aspirational.
+1. **Live adversarial research purchase**: the two agents each pay the research agent real USDC (x402 +
+   ERC-7710) for real risk signals on the position. The amount each commits is a *costly confidence signal* —
+   a bluffing agent can't afford to look sure. *(As built: x402 settlement is DONE/verified live — §6.2.)*
+2. **The revert**: an agent attempts to **stake more than its redelegated budget**. The transaction
+   **reverts at the `ERC20TransferAmount` caveat enforcer** with a real failed tx hash — three hops from the
+   human signature. No app-code guard rejected it; the chain did. This is the irrefutable proof that the cap
+   (and thus the oracle's manipulation-resistance) is structural, not aspirational. *(As built: DONE — §6.4,
+   real reverted tx `ERC20TransferAmountEnforcer:allowance-exceeded`.)*
 
-### The resolvable question (demo)
-**"Will watched wallet `W`'s USDC balance exceed threshold `T` by deadline `D`?"**
-- Clean, verifiable, no oracle trust needed beyond an RPC balance read.
-- The research agent's premium data product *is* the current balance of `W`, fetched via
-  **Venice Crypto RPC** (`eth_call` of USDC `balanceOf`). Agents buy this read to inform
-  their stakes.
-- Resolution: at/after `D`, anyone calls `resolve()`; the contract reads `W`'s USDC balance
-  via the USDC contract directly (onchain `balanceOf`) and settles YES/NO. (The Venice RPC
-  read is what *agents* buy for their reasoning; the *contract* reads balance directly so
-  resolution is trustless.)
+### The resolvable question (THE PIVOT — to rework)
+**"Will real position `P`'s collateral price cross its liquidation level within window `W`?"**
+(Equivalently: does `P` become liquidatable. A softer variant — "is HF below threshold `H` at deadline `D`"
+— is config; the demo uses the liquidation/price-cross form.)
+- **Signals (what agents research):** read from `P` on **mainnet** — real HF, collateral/debt, price
+  headroom, DEX liquidity. The research agent sells these over x402 (§6.1, §7.2).
+- **Resolution (trustless, no oracle ownership):** liquidation is fundamentally a price event. At market open,
+  compute `P`'s **liquidation price** once (collateral price at which HF=1, from its liquidation threshold).
+  The resolution contract reads the collateral's **Chainlink price feed** (`AggregatorV3Interface.latestRoundData()`)
+  and settles YES if it crosses the liquidation level within `W`, else NO. On Base (an L2) the contract **must
+  check the L2 Sequencer Uptime feed** before trusting the price (Chainlink requirement). No Aave deploy, no
+  oracle puppeteering, real price movement, judge-clickable feed contract.
+- **The demo seam, stated openly (do not hide it):** a real mainnet position won't cross its true liquidation
+  price during a 3-minute demo. So for the demo round we **tighten `W` and set a near-the-money strike** (a
+  level the live collateral price is hovering just above/below) so a *real, naturally-occurring* price tick
+  resolves it on camera. Narrate exactly this: "in production, `W` is hours/days and the strike is the
+  position's real liquidation price; for this demo we use a tight window and near-the-money strike so you can
+  watch it resolve against a real feed." Nothing is puppeteered — the price is real, only the window/strike are
+  tightened.
+
+### Downstream consumer (DESIGNED, not built in v1)
+The priced probability is meant to be sold over x402 to consumers (liquidator bots, risk dashboards). **We do
+not build the consumer in v1** — we specify the read endpoint shape and document the loop (§6.5), same posture
+as the custom facilitator. Shows the product loop without doubling x402 surface area.
 
 ---
 
@@ -51,17 +96,22 @@ event.
 
 | Track | Requirement | How Consilium satisfies it |
 |---|---|---|
-| **Best A2A coordination** | redelegation | Human → fund-manager root delegation; fund-manager **redelegates** scoped caps to Bull & Bear via `createDelegation({ parentDelegation })`. Bidirectional value flow: agents pay the research agent. |
-| **Best x402 + ERC-7710** | x402 calls using 7710 | Research agent is a real x402 seller using ERC-7710 `assetTransferMethod`. Bull/Bear are x402 buyers using `createOpenDelegation` + `Redeemer` caveat. |
-| **Best Agent** | Smart Accounts in main flow | Fund-manager agent operates on the human's behalf via MetaMask Smart Accounts; main flow is the agent running a market round. |
-| **Best Use of Venice AI** | Venice core + multimodal | Three endpoints, all load-bearing: `chat/completions` (agent reasoning), `crypto/rpc` (the data agents buy), `image/generations` (resolution card). Nobody else used multimodal Venice. |
-| **Best 1Shot Permissionless Relayer** | relay 7710 via 1Shot mainnet + 7702 upgrade + webhooks | Every 7710 redemption goes through `relayer_send7710Transaction`; 7702 upgrade via stateless delegator; **webhook `destinationUrl` is the UI's status source** (explicit scoring multiplier). |
+| **Best A2A coordination** | redelegation | Human → fund-manager root delegation; fund-manager **redelegates** scoped caps to Bull & Bear via `createDelegation({ parentDelegation })`; traders redelegate again to executor keys (3 levels). Bidirectional value flow: agents pay the research agent. |
+| **Best x402 + ERC-7710** | x402 calls using 7710 | Research agent is a real x402 seller using ERC-7710 `assetTransferMethod` (MetaMask facilitator). Bull/Bear are x402 buyers via the kit's `createx402DelegationProvider`. |
+| **Best Agent** | Smart Accounts in main flow | Fund-manager agent operates on the human's behalf via MetaMask Smart Accounts (7702); main flow is the agent running a market round. |
+| **Best 1Shot Permissionless Relayer** | relay 7710 via 1Shot mainnet + 7702 upgrade + webhooks | Every relayed stake goes through `relayer_send7710Transaction`; 7702 in-place upgrade; **webhook `destinationUrl` is the UI's status source** (explicit scoring multiplier). |
 
-> Note the 1Shot track requires **mainnet** relay + 7702 upgrade. Build the relayer path to
-> be network-configurable. Do the core market on Base Sepolia for cheap iteration, but make
-> the 1Shot relay flow runnable on a mainnet config for the track submission (small amounts).
-> Capabilities (`relayer_getCapabilities`) tells you which chains/tokens are live — **do not
-> hardcode**.
+> **Venice: a bonus, not a pillar (as built).** The three infra rails (Smart Accounts, x402, 1Shot) are the
+> thesis. Venice is added only where an LLM/image is the *natural* component: (1) **agent reasoning runs on
+> Venice** via the `LLM_PROVIDER` toggle (`qwen3-235b-a22b-instruct-2507`; Groq stays a one-line fallback) —
+> reasoning quality isn't track-scored, but it's a real, honest use; (2) the **resolution verdict card is a
+> Venice image** (multimodal — the one distinctive use; §10). We do **not** route the sold risk signals through
+> Venice — those are real onchain reads over a public RPC. Funded by the hackathon's $25 Venice credits.
+
+> Note the 1Shot track favors **mainnet** relay + 7702. The relayer is network-split — testnets on
+> `relayer.1shotapi.dev`, mainnets on `relayer.1shotapi.com` (§8). Base Sepolia (84532) IS supported on `.dev`,
+> so the full relayed flow runs on testnet; keep it network-configurable for a mainnet submission run.
+> Capabilities (`relayer_getCapabilities`) tells you which chains/tokens are live — **do not hardcode**.
 
 ---
 
@@ -71,52 +121,44 @@ event.
 consilium/
 ├── README.md                      # quickstart + demo script (you write this last)
 ├── .env.example                   # every key/var, documented
-├── package.json                   # workspaces: contracts is foundry (separate), rest pnpm
-├── pnpm-workspace.yaml
+├── package.json                   # bun workspaces (shared/agents/web); contracts is foundry (separate)
 ├── packages/
 │   ├── contracts/                 # Foundry
 │   │   ├── foundry.toml
 │   │   ├── src/
-│   │   │   ├── ConsiliumMarket.sol
-│   │   │   └── MockUSDC.sol        # only for local Anvil; on Sepolia use real test USDC
+│   │   │   ├── ConsiliumMarket.sol            # price-cross/liquidation resolution (PIVOT)
+│   │   │   ├── ConsiliumMarketFactory.sol     # permissionless: createMarket() deploys+indexes markets
+│   │   │   └── CUSDC.sol                       # Consilium USDC: local Anvil only; on Sepolia use real test USDC
+│   │   │   # (tests use Chainlink's MockV3Aggregator from chainlink-brownie-contracts — no custom mock)
 │   │   ├── test/
 │   │   │   ├── ConsiliumMarket.t.sol
-│   │   │   └── Revert.t.sol        # proves over-cap stake reverts
-│   │   ├── script/
-│   │   │   └── Deploy.s.sol
-│   │   └── deployments/            # written addresses per chain (json)
-│   ├── shared/                    # TS types + config shared by agents & web
+│   │   │   ├── ConsiliumMarketFactory.t.sol
+│   │   │   └── Revert.t.sol                    # proves over-cap stake reverts
+│   │   ├── script/Deploy.s.sol
+│   │   └── deployments/                        # written addresses per chain (json)
+│   ├── shared/src/                 # env.ts (zod) · chains.ts (priv/pub RPC split) · abis.ts · types.ts
+│   ├── agents/
 │   │   ├── src/
-│   │   │   ├── env.ts              # zod-validated env loader
-│   │   │   ├── chains.ts          # chain + token config, NO hardcoded relayer tokens
-│   │   │   ├── abis.ts            # generated/typed ABIs
-│   │   │   └── types.ts
-│   ├── agents/                    # the autonomous actors + servers
-│   │   ├── src/
-│   │   │   ├── smartAccount.ts     # toMetaMaskSmartAccount helpers
+│   │   │   ├── smartAccount.ts     # 7702 toMetaMaskSmartAccount + upgrade helpers
 │   │   │   ├── delegation.ts       # root + redelegation builders
-│   │   │   ├── venice.ts           # chat / rpc / image clients
-│   │   │   ├── oneshot.ts          # 1Shot JSON-RPC client + webhook verify
-│   │   │   ├── researchServer.ts   # x402 SELLER (Express) — sells balance reads
-│   │   │   ├── buyerClient.ts      # x402 BUYER (7710 delegation payload)
-│   │   │   ├── fundManager.ts      # orchestrator: redelegates, runs a round
-│   │   │   ├── traderAgent.ts      # Bull/Bear: reason (Venice) → buy data → stake
-│   │   │   └── roundRunner.ts      # ties one full round together; emits events to web
-│   │   └── webhook/
-│   │       └── server.ts           # receives 1Shot webhooks, verifies Ed25519, broadcasts (SSE/WS)
-│   └── web/                        # Next.js dashboard (App Router)
-│       ├── app/
-│       │   ├── page.tsx            # landing
-│       │   ├── market/page.tsx     # live market view (SSE-driven, real tx links)
-│       │   └── api/                # SSE relay if needed
-│       └── components/
-└── docs/
-    └── DEMO.md                     # exact 3-minute video script
+│   │   │   ├── llm.ts              # reasoning client (OpenAI-compatible; Venice/Groq toggle)
+│   │   │   ├── rpc.ts             # real onchain risk reads: Aave HF, price headroom, DEX depth (PIVOT)
+│   │   │   ├── oneshot.ts          # 1Shot JSON-RPC client (.dev/.com) + webhook verify
+│   │   │   ├── relayStake.ts       # build+sign+estimate+send the relayed stake bundle
+│   │   │   ├── overcap.ts          # the over-cap revert (direct redemption → real reverted tx)
+│   │   │   ├── researchServer.ts   # x402 SELLER — sells tiered Aave risk signals (PIVOT)
+│   │   │   ├── buyerClient.ts      # x402 BUYER (createx402DelegationProvider)
+│   │   │   ├── roundRunner.ts      # ties one full round together; emits RoundEvents to web
+│   │   │   └── smoke/              # reasoning · signals · feed · delegation · x402 · oneshot · relay · keys
+│   │   └── webhook/server.ts       # receives 1Shot webhooks, verifies Ed25519, broadcasts (SSE/WS)
+│   └── web/                        # Next.js App Router dashboard (shadcn/ui + Tailwind v4, Mono Terminal)
+│       ├── app/{page.tsx, market/page.tsx, api/}
+│       └── components/  · lib/  · brand.md (root)
+└── docs/DEMO.md                    # exact 3-minute video script
 ```
 
-Use **pnpm workspaces** for `shared`, `agents`, `web`. Keep `contracts` as a standalone
-Foundry project (don't fight node tooling into it). A root `package.json` script can shell
-out to `forge`.
+Use **bun workspaces** (the `workspaces` field in the root `package.json`) for `shared`/`agents`/`web`. Keep
+`contracts` a standalone Foundry project. Run everything with `bun` / `bun run`.
 
 ---
 
@@ -126,569 +168,513 @@ out to `forge`.
 
 ```bash
 # --- Chains ---
+# PRIVATE, server-side only (may carry an API key, e.g. QuickNode). NEVER expose to the browser; no
+# NEXT_PUBLIC_ alias. Server code reads it via getServerRpcUrl() (throws in-browser).
 BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
+BASE_SEPOLIA_PUBLIC_RPC_URL=https://sepolia.base.org   # PUBLIC, browser-safe (no key)
 BASE_MAINNET_RPC_URL=https://mainnet.base.org
-CHAIN_ID=84532                      # 84532 Base Sepolia for core; 8453 for 1Shot mainnet track run
+BASE_MAINNET_PUBLIC_RPC_URL=https://mainnet.base.org
+CHAIN_ID=84532                      # 84532 Base Sepolia (core); 8453 for a 1Shot mainnet run
 
-# --- Test USDC on Base Sepolia (verify current address from Circle faucet docs at build time) ---
-USDC_ADDRESS=                        # set after confirming the Base Sepolia USDC test token
+# --- Test USDC on Base Sepolia (Circle test token, confirmed from the faucet list) ---
+USDC_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e
 
-# --- Keys (use fresh throwaway keys; fund with test USDC + a little ETH) ---
+# --- Keys (fresh throwaway keys; fund with test USDC + a little ETH) ---
 DEPLOYER_PRIVATE_KEY=
 FUND_MANAGER_PRIVATE_KEY=
 BULL_PRIVATE_KEY=
 BEAR_PRIVATE_KEY=
 RESEARCH_PRIVATE_KEY=                # research agent's payTo / smart account signer
 
-# --- Venice (https://venice.ai/settings/api) ---
-VENICE_API_KEY=
-VENICE_BASE_URL=https://api.venice.ai/api/v1
+# --- Reasoning LLM (NOT track-scored). Any OpenAI-compatible endpoint. Currently Venice; Groq fallback. ---
+LLM_PROVIDER=venice                  # venice | groq | openai-compatible — agent reasoning only
+LLM_BASE_URL=https://api.venice.ai/api/v1
+LLM_API_KEY=                         # Venice key (METAAGENTS credits), or a free Groq key
+LLM_MODEL=qwen3-235b-a22b-instruct-2507   # non-reasoning instruct model; verify a current id at build time
 
-# --- 1Shot public relayer (no signup needed) ---
-ONESHOT_RELAYER_URL=https://relayer.1shotapi.com/relayers
+# --- RPCs for the sold risk signals (PIVOT) ---
+SIGNAL_RPC_URL=                      # MAINNET RPC to read position P's real Aave signals (Alchemy/Infura free tier)
+DEMO_CHAIN_RPC_URL=https://sepolia.base.org   # chain where the market contract + Chainlink feed are read
+
+# --- The forecasted position + resolution feed (PIVOT — verify ALL at build time, don't hardcode) ---
+POSITION_ADDRESS=                    # real mainnet Aave v3 borrower address P
+AAVE_POOL_ADDRESS=                   # Aave v3 Pool on the chain where P lives
+COLLATERAL_TOKEN=                    # P's collateral asset (whose price triggers liquidation)
+PRICE_FEED_ADDRESS=                  # Chainlink collateral/USD feed on the demo chain (AggregatorV3Interface)
+SEQUENCER_UPTIME_FEED=               # Chainlink L2 Sequencer Uptime feed on Base (REQUIRED on L2)
+
+# --- 1Shot public relayer (no signup; endpoint auto-selected by chain in code: .dev testnet / .com mainnet) ---
+ONESHOT_RELAYER_URL=                 # optional override; code picks .dev for 84532/11155111, .com otherwise
 WEBHOOK_PUBLIC_URL=                  # public https URL (ngrok/cloudflared) for 1Shot to POST to
+WEBHOOK_PORT=8787
 
-# --- x402 ---
-X402_FACILITATOR_URL=https://x402.org/facilitator   # testnet facilitator
+# --- x402 (ERC-7710 settlement via MetaMask facilitator, not x402.org) ---
+X402_FACILITATOR_URL=https://tx-sentinel-base-sepolia.api.cx.metamask.io/platform/v2/x402
 ```
 
-Prereqs to install/verify in your environment:
-- Foundry (`forge`, `cast`, `anvil`) — `curl -L https://foundry.paradigm.xyz | bash && foundryup`
-- Node 20+ and pnpm
-- A tunnel (`cloudflared` or `ngrok`) so 1Shot webhooks can reach your local `webhook/server.ts`
-- Test funds: Base Sepolia ETH (faucet) + Base Sepolia test USDC (Circle faucet). Confirm the
-  **current** test USDC address at build time from `https://faucet.circle.com` / Circle docs —
-  do not trust a memorized address.
+Prereqs:
+- Foundry (`forge`/`cast`/`anvil`) — `curl -L https://foundry.paradigm.xyz | bash && foundryup`
+- Bun 1.3+ (package manager, workspace runner, TS runtime). Node 20+ optional.
+- A tunnel (`cloudflared`/`ngrok`) so 1Shot webhooks reach the local webhook server.
+- Test funds: Base Sepolia ETH (faucet) + test USDC (Circle faucet, **Base Sepolia network** — confirm the
+  current address at build time).
+- A free **mainnet** RPC (Alchemy/Infura) for `SIGNAL_RPC_URL` to read the real Aave position.
 
-**Recommended:** install the official sponsor skills into Claude Code before you start — they
-encode the exact payload/flow details:
-```bash
-npx skills add 1Shot-API/skills/public-relayer
-# Venice skills: https://github.com/veniceai/skills
-```
+**Recommended:** `npx skills add 1Shot-API/skills/public-relayer` (exact relayer payloads).
 
 ---
 
-## 4. Smart contract — `ConsiliumMarket.sol`
+## 4. Smart contract — `ConsiliumMarket.sol` (PIVOT: price-cross resolution)
 
-**Purpose:** a minimal binary prediction market that (a) accepts YES/NO USDC stakes pulled
-via ERC-7710 delegation redemption (i.e. the staker is a smart account redeeming a
-delegation that transfers USDC into the market), (b) resolves against a watched wallet's
-real USDC balance, (c) pays out winners. The contract itself does **not** enforce the
-per-agent cap — **the caveat enforcer in the delegation does.** That separation is the whole
-point: the contract is permissionless; the *budget* lives in MetaMask's DelegationManager.
+**Purpose:** a minimal binary prediction market that (a) accepts YES/NO USDC stakes (push model — see below),
+(b) resolves a *liquidation/price-cross* outcome by reading a real **Chainlink feed** with the **L2 sequencer
+guard**, (c) pays out winners parimutuel. The contract does **not** enforce the per-agent cap — **the caveat
+enforcer in the delegation does.** The contract is permissionless; the *budget* lives in MetaMask's
+DelegationManager.
+
+### Market parameters (a round forecasts a price-cross within a window)
+- `priceFeed` — Chainlink `AggregatorV3Interface` for the collateral asset (e.g. ETH/USD on Base).
+- `sequencerUptimeFeed` — Chainlink L2 Sequencer Uptime feed for Base (REQUIRED on L2).
+- `liquidationPrice` — collateral price (feed decimals) at/below which `P` becomes liquidatable. Computed
+  off-chain once at open from `P`'s liquidation threshold + debt/collateral; passed to the constructor; stored
+  as the strike.
+- `direction` — whether YES means "price ≤ liquidationPrice" (normal: collateral falling triggers liquidation).
+- `deadline` (window `W`), `openTime`.
+- `positionRef` — mainnet `P` address + collateral/debt metadata, stored for display/audit (not used in
+  resolution math; anchors the question to a real position).
 
 ### State / behavior
-- `constructor(IERC20 usdc, address watchedWallet, uint256 threshold, uint64 deadline)`
-- Stakes tracked per side: `mapping(uint8 side => uint256 total)` and per staker
-  `mapping(address => Position)` where `Position { uint8 side; uint256 amount; }`.
-- `stake(uint8 side, uint256 amount)`: `usdc.transferFrom(msg.sender, address(this), amount)`
-  then record. **`msg.sender` is the agent's smart account**, which is moving funds it
-  obtained by redeeming its delegation. (The over-cap revert happens *before* this, during
-  delegation redemption — see §6.4. The contract stays simple.)
-  - Use a custom error `MarketClosed()` if `block.timestamp >= deadline`.
-- `resolve()`: require `block.timestamp >= deadline`, read
-  `usdc.balanceOf(watchedWallet) >= threshold` → outcome YES else NO. Store `resolved` +
-  `outcome`. Emit `Resolved(outcome, observedBalance)`.
-- `claim()`: winners withdraw pro-rata share of the total pot (winning side splits the
-  full pot proportionally to their stake). Standard parimutuel math; guard against
-  double-claim; use checks-effects-interactions.
-- Events for everything the UI shows: `Staked(address agent, uint8 side, uint256 amount)`,
-  `Resolved(...)`, `Claimed(...)`.
+- `constructor(IERC20 usdc, AggregatorV3Interface priceFeed, AggregatorV3Interface sequencerFeed,
+  int256 liquidationPrice, uint8 direction, uint64 deadline, PositionRef positionRef)`.
+- Stakes per side: `mapping(uint8 side => uint256 total)` + per staker `mapping(address => Position){ uint8 side; uint256 amount; }`.
+- **Stake (PUSH MODEL — as built, keep).** `stake(uint8 side, uint256 amount)` credits USDC **already
+  transferred into** the market: it checks `usdc.balanceOf(address(this)) - pot() >= amount` (else `Unfunded()`),
+  records, and accumulates. This decouples staking from `transferFrom`/allowances so the 1Shot bundle can move
+  USDC via a top-level `transfer` the `ERC20TransferAmount` enforcer gates (that's what makes the over-cap revert
+  fire at the enforcer, §6.4). A staker accumulates on one side only (`SideMismatch()` on switch); `MarketClosed()`
+  if `block.timestamp >= deadline`. Checks order: closed → invalid side → zero → side-mismatch → funded.
+- `_readPrice()` (internal, Chainlink L2 pattern — implement, don't skip; it's a credibility signal): read
+  `sequencerFeed.latestRoundData()`, require sequencer up (`answer == 0`) and past grace
+  (`block.timestamp - startedAt > GRACE_PERIOD`) else `SequencerDown()` / `GracePeriodNotOver()`. Then
+  `priceFeed.latestRoundData()`, require fresh (`updatedAt` recent, `answer > 0`), return price.
+- **`poke()`** — anyone (the round runner) can call while open; reads the price, and if the liquidation
+  condition is met (`direction==DOWN ? price <= liquidationPrice : price >= liquidationPrice`) latches
+  `crossed = true` + records `observedPrice`. Captures an intra-window cross even if price later recovers
+  (liquidation is one-way — once liquidatable, outcome is YES).
+- `resolve()`: require `block.timestamp >= deadline OR crossed`. Outcome YES if `crossed` (or a final
+  `_readPrice()` meets the condition), else NO. Store `resolved` + `outcome` + `observedPrice`. Emit
+  `Resolved(outcome, observedPrice, liquidationPrice)`.
+- `claim()`: winning side splits the full pot pro-rata; parimutuel; `nonReentrant`; CEI; guard double-claim.
+  *As built:* if a side has zero stake, refund stakes (no stuck funds / div-by-zero); integer-division dust
+  stays in the contract, preserving `total claimed ≤ pot`.
+- Events: `Staked(agent, side, amount)`, `Poked(price, crossed)`, `Resolved(outcome, observedPrice, liquidationPrice)`, `Claimed(agent, amount)`.
 
-### Solidity conventions (from foundry skill)
-- `pragma solidity ^0.8.30;`, custom errors, `evm_version = "prague"`, optimizer on.
-- Use OpenZeppelin `IERC20` + `SafeERC20`. Install via `forge install OpenZeppelin/openzeppelin-contracts`.
-- ReentrancyGuard on `claim()`.
+### `ConsiliumMarketFactory.sol` (permissionless creation — as built, keep)
+`createMarket(...)` (new param set above) deploys a `ConsiliumMarket`, indexes it (`allMarkets`,
+`marketsOf(creator)`), emits `MarketCreated(...)`, guards `deadline > block.timestamp`. Market creation is
+itself a real onchain event. `Deploy.s.sol` deploys the factory and creates the demo market through it.
 
-### `MockUSDC.sol`
-6-decimal ERC20 with public `mint` — **local Anvil only**. On Sepolia use real test USDC so
-the demo is legitimately onchain.
+### Conventions + mocks
+- `pragma solidity ^0.8.30;`, custom errors, `evm_version="prague"`, optimizer on. OZ `IERC20`/`SafeERC20`/
+  `ReentrancyGuard`; Chainlink `AggregatorV3Interface` from `@chainlink/contracts`. Install:
+  `forge install OpenZeppelin/openzeppelin-contracts smartcontractkit/chainlink-brownie-contracts`.
+- `CUSDC.sol`: 6-dp ERC20 + public `mint` — local Anvil only; on Base Sepolia use real test USDC.
+- **No custom price mock.** The contract codes against `AggregatorV3Interface`; the implementation behind it
+  changes by environment. **Production** (Base Sepolia / mainnet): `priceFeed` = the real Chainlink feed,
+  `sequencerFeed` = the real sequencer uptime feed (or `address(0)` on Base Sepolia, which has none — guard
+  skipped, §4 `_readPrice`). **Tests**: Chainlink's audited **`MockV3Aggregator`** (from
+  `chainlink-brownie-contracts`) — `updateAnswer(price)` drives the price across the strike; `updateRoundData(...)`
+  sets the sequencer answer (0=up/1=down) + `startedAt` to exercise down + grace-period. Same interface both
+  ways, so production code is identical. No mock ever ships to the demo chain.
 
-### Tests (`forge test -vvv` must pass)
-`ConsiliumMarket.t.sol`:
-- `test_StakeBothSides` — both agents stake, totals update.
-- `test_ResolveYes_whenBalanceAboveThreshold` — `deal` watched wallet above `T`, warp past
-  `D`, resolve → YES.
-- `test_ResolveNo_whenBelowThreshold`.
-- `test_ClaimPaysWinnersProRata` — winners get pot, losers get nothing, sums conserve.
-- `test_RevertWhen_StakeAfterDeadline` — `vm.expectRevert(MarketClosed.selector)`.
-- `testFuzz_ClaimNeverExceedsPot(uint256[] stakes)` — invariant: total claimed ≤ pot.
+### Tests (`forge test -vvv` must pass) — to rework for price resolution
+`ConsiliumMarket.t.sol` (use `MockAggregator`): `test_StakeBothSides`; `test_ResolveYes_whenPriceCrossesDown`
+(price ≤ strike → poke → resolve YES); `test_ResolveNo_whenPriceStaysAbove`; `test_PokeLatchesCrossEvenIfPriceRecovers`;
+`test_RevertWhen_SequencerDown`; `test_RevertWhen_GracePeriodNotOver`; `test_ClaimPaysWinnersProRata` +
+`testFuzz_ClaimNeverExceedsPot`; `test_RevertWhen_StakeAfterDeadline`; plus the push-model funding tests
+(`Unfunded`, `SideMismatch`).
+`ConsiliumMarketFactory.t.sol`: correct params on created market, indexing, `MarketCreated`, distinct/segregated,
+past-deadline revert, fully-functional created market.
+`Revert.t.sol` — over-cap backstop: assert a redemption over an agent's cap reverts at the
+`ERC20TransferAmountEnforcer` (fork Base Sepolia if feasible; else unit-test at the toolkit env address). The
+contract-level backstop also proves the push-model math: staking more than was transferred in reverts `Unfunded`.
 
-`Revert.t.sol` — the money-moment, tested at contract level as a backstop (the *real* enforcer
-revert is exercised by the integration script at the **trader→executor hop**, §5.4 + §6.4, but
-prove the math here too):
-- Simulate a redemption that would transfer more than an agent's cap and assert the
-  delegation-redemption path reverts. (If you can integrate the MetaMask DelegationManager +
-  `ERC20TransferAmountEnforcer` in a fork test, do it — fork Base Sepolia with
-  `--fork-url $BASE_SEPOLIA_RPC_URL`. Otherwise assert the enforcer contract's behavior in a
-  focused unit test using its deployed address from the toolkit `environment`.)
-
-Deliver a `Deploy.s.sol` that deploys `ConsiliumMarket` (and `MockUSDC` only on chainid
-31337), writes addresses to `deployments/<chainId>.json`, and `console.log`s them.
+`Deploy.s.sol` deploys `ConsiliumMarketFactory` (and `CUSDC` only on chainid 31337), creates the demo market
+through the factory pointing at the **real Chainlink feed + sequencer feed**, writes `deployments/<chainId>.json`.
 
 ---
 
-## 5. MetaMask Smart Accounts Kit — delegation layer
+## 5. MetaMask Smart Accounts Kit — delegation layer (as built: EIP-7702)
 
-> Package: `@metamask/smart-accounts-kit` (v1.6.x). Verified imports & call shapes below.
-> Docs: redelegation https://docs.metamask.io/smart-accounts-kit/guides/delegation/create-redelegation/
-> x402 buyer https://docs.metamask.io/smart-accounts-kit/guides/x402/buyer/delegations/
+> Package: `@metamask/smart-accounts-kit` (v1.6.x). Docs: redelegation
+> docs.metamask.io/smart-accounts-kit/guides/delegation/create-redelegation/ · x402 buyer
+> docs.metamask.io/smart-accounts-kit/guides/x402/buyer/delegations/
 
-### 5.1 Smart accounts (`smartAccount.ts`)
-Every actor (fund-manager, bull, bear, research) is a MetaMask smart account:
+### 5.1 Smart accounts (`smartAccount.ts`) — EIP-7702 (as built)
+Each actor's funded EOA is upgraded **in place** via EIP-7702 (`Implementation.Stateless7702`): the
+smart-account address **is** the EOA address — USDC on the EOA is on the operational account, no separate
+counterfactual address, and it matches the 1Shot 7702 path (§8).
 
 ```ts
-import { Implementation, toMetaMaskSmartAccount } from '@metamask/smart-accounts-kit'
-import { createPublicClient, http } from 'viem'
-import { baseSepolia } from 'viem/chains'
+import { Implementation, toMetaMaskSmartAccount, getSmartAccountsEnvironment } from '@metamask/smart-accounts-kit'
+import { createPublicClient, createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
+import { activeChain, getServerRpcUrl } from '@consilium/shared'
 
-export const publicClient = createPublicClient({ chain: baseSepolia, transport: http(process.env.BASE_SEPOLIA_RPC_URL) })
+export const publicClient = createPublicClient({ chain: activeChain.chain, transport: http(getServerRpcUrl()) })
 
 export async function makeSmartAccount(pk: `0x${string}`) {
   const owner = privateKeyToAccount(pk)
   return toMetaMaskSmartAccount({
     client: publicClient,
-    implementation: Implementation.Hybrid,
-    deployParams: [owner.address, [], [], []],
-    deploySalt: '0x',
+    implementation: Implementation.Stateless7702,
+    address: owner.address,            // 7702: account address == EOA address
     signer: { account: owner },
   })
 }
 ```
-- **Deploy each smart account before it redeems anything** (the buyer guide warns: undeployed
-  delegator → redemption fails). Deploy by sending its first user op, or via the toolkit's
-  deployment path. Fund each with test USDC (+ tiny ETH if any path needs it; 1Shot covers gas
-  for the relayed legs).
+- **Upgrade each EOA once before it redeems anything.** Self-sponsored EIP-7702 authorization setting code to
+  `EIP7702StatelessDeleGatorImpl` (from `getSmartAccountsEnvironment(chainId).implementations`):
+  `wallet.signAuthorization({ account, contractAddress: impl, executor: 'self' })` →
+  `wallet.sendTransaction({ authorizationList: [auth], to: account.address })`. `bun run accounts:upgrade` does
+  this for every funded role; `bun run keys:status` shows the ✓.
+- Fund each EOA with a little Base Sepolia ETH (one-time upgrade + any self-paid gas); traders also hold test
+  USDC. 1Shot covers gas for the relayed stake legs.
 
 ### 5.2 Root delegation: human → fund-manager
-Use a real MetaMask browser signer for the human in the UI (ERC-7715 advanced-permissions
-flow is the polished version). For headless agent runs, the human can be a smart account too.
-Root delegation grants the fund-manager an `Erc20TransferAmount` scope (total market budget).
+Real MetaMask browser signer for the human (ERC-7715 advanced-permissions is the polished path; headless = a
+smart account). Root grants the fund-manager an `Erc20TransferAmount` scope (total market budget).
 
-### 5.3 Redelegation: fund-manager → Bull / Bear  (THE A2A REQUIREMENT)
-This is the verified pattern — narrow the scope, pass `parentDelegation`:
-
+### 5.3 Redelegation: fund-manager → Bull / Bear (THE A2A REQUIREMENT)
+Narrow the scope, pass `parentDelegation`:
 ```ts
 import { createDelegation, ScopeType } from '@metamask/smart-accounts-kit'
-import { parseUnits } from 'viem'
-
 const redelegation = createDelegation({
   scope: { type: ScopeType.Erc20TransferAmount, tokenAddress: USDC, maxAmount: parseUnits('20', 6) },
-  to: bullSmartAccount.address,
-  from: fundManagerSmartAccount.address,
-  parentDelegation: signedRootDelegation,   // <-- links the chain; without this, no A2A
-  environment: fundManagerSmartAccount.environment,
+  to: bullSmartAccount.address, from: fundManagerSmartAccount.address,
+  parentDelegation: signedRootDelegation, environment: fundManagerSmartAccount.environment,
 })
-const signedRedelegation = await fundManagerSmartAccount.signDelegation({ delegation: redelegation })
+const signed = await fundManagerSmartAccount.signDelegation({ delegation: redelegation })
 ```
-- Bull gets a `maxAmount` cap (e.g. 20 USDC); Bear likewise. **A child delegation can only
-  narrow, never expand** — rely on that.
-- To further constrain (e.g. single use), add caveats with `createCaveatBuilder` +
-  `CaveatType.LimitedCalls`, set `authority = hashDelegation(parent)` (see redelegation doc's
-  "Limit redelegation using caveats").
+A child can only **narrow**. Add `createCaveatBuilder` + `CaveatType.LimitedCalls` for single-use; link
+`authority = hashDelegation(parent)`.
 
-### 5.4 Third hop: trader → execution key  (DEEPER A2A THAN THE FIELD)
-Make the delegation chain **3 levels deep**: `Human → fund-manager → trader → executor`.
-Each trader redelegates a *narrower sliver* of its budget to a disposable per-round
-**execution smart account** that actually submits the stake. This mirrors how real agent
-systems isolate the hot signing key from the budget-holding identity, so it's principled, not
-decorative — and it makes Consilium's A2A chain deeper than DelegAI's (master→worker) and
-everyone else's two-level trees.
-
-```ts
-// trader (Bull) redelegates only what it intends to stake this round to a throwaway executor
-const execDelegation = createDelegation({
-  scope: { type: ScopeType.Erc20TransferAmount, tokenAddress: USDC, maxAmount: stakeThisRound },
-  to: bullExecutorSmartAccount.address,
-  from: bullSmartAccount.address,
-  parentDelegation: signedRedelegation,     // <-- chains to the fund-manager's grant, which chains to the human
-  environment: bullSmartAccount.environment,
-})
-const signedExec = await bullSmartAccount.signDelegation({ delegation: execDelegation })
-```
-- The executor is the account whose delegation the 1Shot relayer redeems (§8). Its `to` for
-  the *relayed* leg must equal the relayer `targetAddress` (capabilities); here the
-  redelegation hop is trader→executor, and the executor then grants the relayer-scoped
-  delegation. Keep the attenuation strict at every hop: `stakeThisRound ≤ trader cap ≤ manager
-  cap ≤ human budget`.
-- **This is also where the over-cap revert lives most naturally** (§6.4): have the executor
-  attempt to redeem for more than `stakeThisRound` — the `ERC20TransferAmount` enforcer at the
-  trader→executor hop rejects it. The deeper chain makes the revert *more* convincing: it proves
-  attenuation holds even three hops from the human.
-- Smoke assertion (`pnpm delegation:smoke`): print all three signed delegations, verify each
-  child's `maxAmount ≤` its parent's, and verify `parentDelegation`/`authority` linkage via
-  `hashDelegation`.
+### 5.4 Third hop: trader → executor (DEEPER A2A THAN THE FIELD)
+3-level chain `Human → fund-manager → trader → executor`; each trader redelegates a narrower sliver to a
+disposable per-round executor that submits the stake. Attenuation strict at every hop:
+`stakeThisRound ≤ trader cap ≤ manager cap ≤ human budget`. This is where the over-cap revert lives most
+naturally (§6.4). `bun run delegation:smoke` (as built): signs the full 3-level chain, decodes each cap from
+the signed delegation, asserts `child ≤ parent`, and verifies `authority == hashDelegation(parent)`.
 
 ---
 
 ## 6. x402 + ERC-7710 — the inter-agent commerce rail
 
-> x402 packages: `@x402/express`, `@x402/core`, `@x402/evm`, `@x402/fetch`.
-> Network CAIP-2: Base Sepolia = `eip155:84532`. Testnet facilitator `https://x402.org/facilitator`.
+> x402 packages: `@x402/express`, `@x402/core`, `@x402/fetch`, plus **`@metamask/x402`** for the ERC-7710 scheme.
+> **Facilitator (as built):** ERC-7710 settlement runs through **MetaMask's facilitator**
+> (`https://tx-sentinel-base-sepolia.api.cx.metamask.io/platform/v2/x402`), NOT x402.org — the stock `@x402/evm`
+> exact scheme only does EIP-3009/permit2. Seller uses `@metamask/x402` `x402ExactEvmErc7710ServerScheme`; buyer
+> uses the kit's `createx402DelegationProvider`.
 
-### 6.1 Research agent = x402 SELLER (`researchServer.ts`)
-Express server selling the premium data product: **the current USDC balance of watched
-wallet `W`**, fetched via Venice Crypto RPC. Protect the route with x402 priced per call, and
-**advertise ERC-7710 as the asset transfer method** so buyers pay via delegation.
+### 6.1 Research agent = x402 SELLER (`researchServer.ts`) — PIVOT: tiered risk signals
+Express server selling **real onchain risk signals** about position `P`, as separately-priced products. Each
+route is x402-gated and advertises `extra.assetTransferMethod: 'erc7710'`. Tiered products make
+evidence-gathering a *costly signal*: a more confident agent buys deeper, costlier signals.
 
 ```ts
-import express from 'express'
-import { paymentMiddleware } from '@x402/express'
-import { x402ResourceServer, HTTPFacilitatorClient } from '@x402/core/server'
-import { registerExactEvmScheme } from '@x402/evm/exact/server'
-
-const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: process.env.X402_FACILITATOR_URL }))
-registerExactEvmScheme(server)
-
 app.use(paymentMiddleware({
-  'GET /research/balance': {
-    accepts: [{ scheme: 'exact', price: '$0.05', network: 'eip155:84532', payTo: RESEARCH_ADDRESS }],
-    description: 'Current USDC balance of the watched wallet (Venice RPC sourced)',
-    mimeType: 'application/json',
-  },
+  'GET /research/health':    { accepts:[{ scheme:'exact', price:'$0.02', network:'eip155:84532', payTo: RESEARCH_ADDRESS, extra:{ assetTransferMethod:'erc7710' } }], description:'Aave v3 health factor + collateral/debt for P' },
+  'GET /research/headroom':  { accepts:[{ scheme:'exact', price:'$0.05', network:'eip155:84532', payTo: RESEARCH_ADDRESS, extra:{ assetTransferMethod:'erc7710' } }], description:'Price headroom: % drop to liquidation + liquidation price' },
+  'GET /research/liquidity': { accepts:[{ scheme:'exact', price:'$0.10', network:'eip155:84532', payTo: RESEARCH_ADDRESS, extra:{ assetTransferMethod:'erc7710' } }], description:'DEX depth for collateral: clean liquidation or cascade' },
 }, server))
-
-app.get('/research/balance', async (_req, res) => {
-  const balance = await veniceRpcBalanceOf(USDC, WATCHED_WALLET)  // §7.2
-  res.json({ wallet: WATCHED_WALLET, usdc: balance, ts: Date.now() })
-})
+app.get('/research/health',    async (_q,res)=>res.json(await aaveAccountData(POSITION)))   // §7.2
+app.get('/research/headroom',  async (_q,res)=>res.json(await priceHeadroom(POSITION)))      // §7.2
+app.get('/research/liquidity', async (_q,res)=>res.json(await dexDepth(COLLATERAL_TOKEN)))   // §7.2
 ```
-- **Dynamic pricing (the costly-signal twist):** vary `price` based on how "informative" the
-  read is or how many times an agent has bought this round (e.g. price rises as deadline
-  nears or as the same buyer re-queries). Implement as a small pricing function that sets the
-  `accepts[].price` per request. Keep it real and explainable in the demo.
-- The seller must declare `extra.assetTransferMethod = 'erc7710'` and supply
-  `extra.facilitators` (facilitator addresses) in the 402 `PAYMENT-REQUIRED` challenge so the
-  buyer can scope the `Redeemer` caveat. Confirm the exact field path the installed `@x402/evm`
-  server scheme emits; the buyer guide consumes `accepted.extra.assetTransferMethod` and
-  `accepted.extra.facilitators`.
+- All three are **real reads** (Aave v3 `getUserAccountData` on mainnet; headroom from liq-threshold + Chainlink
+  price; DEX depth from an onchain quoter/pool). Source from any RPC — value is metering + settlement.
+- **Costly-signal twist:** deeper signals cost more; you may raise price as the window nears close. Keep it
+  explainable: "the Bull paid for all three tiers — it's putting money behind its conviction."
+- *As built (v1 wiring, carries over):* the server scheme, `cors` exposing `PAYMENT-REQUIRED`/`PAYMENT-RESPONSE`,
+  and the 402 challenge emitting `extra.assetTransferMethod === 'erc7710'` are verified. Swap the single balance
+  route for the three tiered routes.
 
-> **v2 seam — custom 1Shot-routed facilitator (architect now, build later).** The hackathon
-> invites "build your own x402 7710 facilitator on top of the 1Shot public relayer." We do NOT
-> build it for v1 — the stock `HTTPFacilitatorClient` satisfies every requirement and a custom
-> `/verify`+`/settle` is a multi-day effort with real failure surface. But keep the seam clean:
-> the facilitator is injected via `HTTPFacilitatorClient({ url })`, so a future
-> `ConsiliumFacilitator` that simulates the delegation redemption and routes `/settle` through
-> `relayer_send7710Transaction` is a drop-in swap. Say exactly this in the README under "Future
-> work" — it signals depth without the build cost.
+> **v2 seam — custom 1Shot-routed facilitator (architect now, build later).** Stock `HTTPFacilitatorClient`
+> satisfies v1; a future `ConsiliumFacilitator` routing `/settle` through `relayer_send7710Transaction` is a
+> drop-in (injected via `HTTPFacilitatorClient({ url })`). Say this in the README "Future work."
 
-### 6.2 Trader agents = x402 BUYER (`buyerClient.ts`)
-Verified buyer flow (open delegation + Redeemer caveat → encode → PAYMENT-SIGNATURE):
-
+### 6.2 Trader agents = x402 BUYER (`buyerClient.ts`) — as built (DONE, settled live)
+The buyer side is the kit's `createx402DelegationProvider` + `@metamask/x402` — auto-creates, signs, and
+ABI-encodes an open delegation (redeemer / allowedTargets / timestamp caveats) on a 402, giving a
+`fetch`-compatible function that pays + retries:
 ```ts
-import { CaveatType, createOpenDelegation, ScopeType } from '@metamask/smart-accounts-kit'
-import { encodeDelegations } from '@metamask/smart-accounts-kit/utils'
-
-// 1. GET the route with no PAYMENT-SIGNATURE → expect 402
-const challenge = await fetch(url)                       // status 402
-const pr = JSON.parse(Buffer.from(challenge.headers.get('PAYMENT-REQUIRED')!, 'base64').toString())
-const accepted = pr.accepts[0]
-if (accepted.extra.assetTransferMethod !== 'erc7710') throw new Error('need 7710 seller')
-
-// 2. open root delegation from buyer smart account, restricted to facilitator(s)
-const delegation = createOpenDelegation({
-  from: buyerSmartAccount.address,
-  environment: buyerSmartAccount.environment,
-  scope: { type: ScopeType.Erc20TransferAmount, tokenAddress: accepted.asset, maxAmount: BigInt(accepted.amount) },
-  caveats: [{ type: CaveatType.Redeemer, redeemers: accepted.extra.facilitators }],
-})
-const signature = await buyerSmartAccount.signDelegation({ delegation })
-const signed = { ...delegation, signature }
-
-// 3. build x402 payload
-const permissionContext = encodeDelegations([signed])
-const paymentPayload = {
-  x402Version: 2,
-  accepted,
-  payload: {
-    delegationManager: buyerSmartAccount.environment.DelegationManager,
-    permissionContext,
-    delegator: buyerSmartAccount.address,
-  },
+import { createx402DelegationProvider } from '@metamask/smart-accounts-kit/experimental'
+import { x402Erc7710Client } from '@metamask/x402'
+import { x402Client, x402HTTPClient } from '@x402/core/client'
+import { wrapFetchWithPayment } from '@x402/fetch'
+export function makeBuyerFetch(buyerSmartAccount) {
+  const erc7710 = new x402Erc7710Client({ delegationProvider: createx402DelegationProvider({ account: buyerSmartAccount }) })
+  return wrapFetchWithPayment(fetch, new x402HTTPClient(new x402Client().register('eip155:*', erc7710)))
 }
-const encodedPayment = Buffer.from(JSON.stringify(paymentPayload)).toString('base64')
-
-// 4. retry with PAYMENT-SIGNATURE
-const res = await fetch(url, { headers: { 'PAYMENT-SIGNATURE': encodedPayment } })
-const data = await res.json()       // the balance read
 ```
-- The buyer's delegation here is funded from its **redelegated budget** from the fund-manager,
-  so the cap chains all the way back to the human. Keep the data-purchase amounts well under
-  the agent's cap (those succeed); the over-cap event is reserved for the staking step (§6.4).
+- Buyer smart account must be deployed (7702-upgraded) and hold USDC; the cap chains back to the human. Keep
+  data-purchase amounts under the agent's cap; the over-cap event is reserved for staking (§6.4).
+- **Acceptance: DONE (settled live).** `bun run x402:smoke` settled a real USDC payment on Base Sepolia (bull
+  paid the research agent via ERC-7710 delegation; `PAYMENT-RESPONSE` carries the real tx hash). A confident
+  agent buys multiple tiers; a hesitant one buys only the cheap tier — total spent is the costly signal.
 
-### 6.3 Staking via the market (the work transaction)
-After buying enough data, each agent stakes on the market. The stake moves USDC from the
-agent's smart account into `ConsiliumMarket.stake(side, amount)`. Route this **through the
-1Shot relayer** (§8) so gas is paid in USDC and the human/agents never need ETH — and so the
-relayer webhook gives the UI its status.
+### 6.3 Staking via the market (the work transaction) — as built
+After buying signals, each agent stakes LIQUIDATABLE/SAFE via the **1Shot relayer** (§8) — gas in USDC, no ETH.
+*As built (`relayStake.ts`):* two delegations per stake — `ERC20TransferAmount`-capped
+`[USDC.transfer(feeCollector,fee), USDC.transfer(market,stake)]` + `FunctionCall(market.stake)` — redeemed
+atomically; the push-model market credits the transferred USDC.
 
-### 6.4 THE REVERT money-moment
-Deliberately have one agent attempt to stake **more than its redelegated cap**. Because the
-stake pulls funds via a delegation scoped by `ERC20TransferAmount`, redemption reverts at the
-enforcer:
-```
-ERC20TransferAmountEnforcer: allowance-exceeded   (or the current message — capture the real revert string)
-```
-- Implement `roundRunner.ts` with a flag `--demo-overcap` (or a UI button) that makes the
-  losing agent request a stake above its cap. Capture the **real failed tx hash** (the relayer
-  will report a terminal Reverted/Rejected status via webhook). Surface it in the UI as a red
-  "rejected by enforcer" card linking to the explorer.
-- Do NOT add an app-side check that pre-empts this. The point is the chain rejects it. Your
-  code may *predict* it will fail (for UX copy) but must still submit it so the revert is real.
+### 6.4 THE REVERT money-moment — as built (DONE)
+An agent attempts to stake **more than its redelegated cap**; the `ERC20TransferAmount` enforcer reverts.
+*As built (approach B — direct redemption):* `overcap.ts` signs an `ERC20TransferAmount(cap)` delegation, calls
+`DelegationManager.redeemDelegations` directly with an over-cap execution, submitted with an explicit gas limit
+(skips estimation) so it mines and reverts → a **real clickable failed-tx hash**:
+`ERC20TransferAmountEnforcer:allowance-exceeded`. `bun run demo:overcap`. (Through the relayer it rejects at
+estimate/simulation with no on-chain tx — that's why we redeem directly.) **Product meaning:** this revert is
+*why the oracle is manipulation-resistant* — an agent can't skew the published probability beyond its bonded,
+chain-enforced stake. Do NOT add an app-side pre-empt; submit it for real.
+
+### 6.5 Consumer-side read endpoint (DESIGNED, not built in v1)
+Specify but don't build: a `GET /oracle/:marketId` route, x402-gated like the research routes, returning the
+current market-implied liquidation probability (YES pot / total pot, capital-weighted) + the resolved outcome.
+Consumers (liquidator bots, risk dashboards) pay a micropayment to read it. Document the endpoint + an example
+consumer call in the README "Future work / product loop." Same posture as the custom facilitator: real design,
+deferred build.
 
 ---
 
-## 7. Venice — multimodal, all load-bearing (`venice.ts`)
+## 7. Reasoning LLM + risk-signal reads
 
-> Base: `https://api.venice.ai/api/v1`, OpenAI-compatible. Auth: `Authorization: Bearer $VENICE_API_KEY`.
-> Docs: https://docs.venice.ai/overview/about-venice  (index at https://docs.venice.ai/llms.txt)
+### 7.1 Agent reasoning (`llm.ts`) — as built (Venice; Groq fallback)
+Each trader calls an OpenAI-compatible LLM to decide stance & size given the **purchased risk signals**. Thin
+wrapper behind `LLM_PROVIDER`/`LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` — currently **Venice**
+(`qwen3-235b-a22b-instruct-2507`, $25 credits), Groq free Llama a one-line fallback. Prompt gets the *real*
+signals (HF, headroom %, liquidation price, DEX depth); return structured JSON
+`{ stance:'LIQUIDATABLE'|'SAFE', sizeUsdc:number, confidence:number, rationale:string }` via `json_object` mode,
+parsed defensively (strip fences). *As built lesson:* prefer a **non-reasoning** instruct model — thinking
+models burn the token budget on hidden reasoning and truncate the JSON. The reasoning is real because the
+*inputs* are real onchain risk data — that's what keeps the number from being confident nonsense.
 
-### 7.1 Chat — agent reasoning
-Each trader uses Venice chat to decide its stance & size given the data it bought. Use a
-current text model id (verify available ids at build time via the models endpoint; the docs
-show ids like `openai-gpt-55`, `kimi-k2-6` — **fetch the live list, don't hardcode a guess**).
-Optionally enable web search with `venice_parameters: { enable_web_search: "auto" }` for
-richer reasoning. Demand structured JSON output (stance, sizeUSDC, rationale) and parse it
-defensively.
-
-### 7.2 Crypto RPC — the data the agents buy
-The research agent fetches the watched wallet's USDC balance through Venice's RPC proxy:
+### 7.2 The sold risk signals (`rpc.ts`) — real onchain reads (PIVOT: replaces the balance read)
+Three real reads, sold as tiered x402 products (§6.1). Read the **mainnet** position for genuine signals.
 ```ts
-// POST https://api.venice.ai/api/v1/crypto/rpc/base-mainnet  (or base-sepolia if supported; verify chain slug)
-// eth_call balanceOf(address) on the USDC contract, decode the uint256, divide by 1e6
+// (a) Aave v3 HF + composition (headline). Pool.getUserAccountData(P) → { totalCollateralBase, totalDebtBase,
+//     availableBorrowsBase, currentLiquidationThreshold, ltv, healthFactor }. Verify the Aave v3 Pool address.
+export async function aaveAccountData(P) { /* readContract getUserAccountData on SIGNAL_RPC_URL */ }
+// (b) Price headroom (dynamic). liquidationPrice from liq-threshold + debt/collateral (single-collateral
+//     first-order is fine for the demo — show the formula in the UI). headroomPct = (price - liqPrice)/price.
+export async function priceHeadroom(P) { /* compute from (a) + Chainlink latestRoundData */ }
+// (c) Exit liquidity (deepest). Uniswap v3 quoter out-amount for a liquidation-sized swap and/or pool liquidity.
+export async function dexDepth(token) { /* onchain quoter/pool read */ }
 ```
-Verify the exact chain slug for Base from `https://docs.venice.ai/api-reference/endpoint/crypto/rpc`
-(it lists supported chains/methods). If Venice RPC doesn't expose the target testnet, fetch
-mainnet USDC balance of a real wallet for the read product and keep the *market resolution*
-on the chain where the contract lives — document this split clearly; it's still legitimate
-(the purchased datum is a real onchain read via Venice; the settlement is a real onchain read
-via the contract).
+- Each is a genuine onchain read sold over a genuine x402 call. **Document the chain split openly:** signals
+  read mainnet `P`; settlement reads the collateral's Chainlink feed on the demo chain (§4). Neither is faked.
+- Keep the liquidation-price math honest and simple; don't overclaim a full multi-collateral risk engine.
 
-### 7.3 Image — the resolution card
-On `resolve()`, generate a shareable "verdict card" image via Venice image generation
-summarizing: the question, outcome (YES/NO), observed balance vs threshold, and how much each
-agent committed to evidence (the costly-signal payoff). Save the PNG and show it in the UI +
-make it downloadable. This is the multimodal differentiator — **nobody else used Venice
-image generation as part of the core flow.**
+### 7.3 Resolution card — Venice image (the one multimodal use), SVG fallback
+On `resolve()`, generate a shareable verdict card via **Venice image generation** (§10): the question
+(position `P`, liquidation price, window `W`), outcome (**LIQUIDATABLE / SAFE**), observed price vs liquidation
+price, and how much each agent committed to evidence (the costly-signal payoff). Keep a plain **SVG/HTML
+fallback** so the demo never blocks on the image API (the fallback is clearly a fallback — no silent fake).
 
-Build `venice.ts` with three exported clients: `veniceChat()`, `veniceRpc(chainSlug, jsonRpcBody)`,
-`veniceImage(prompt) -> Buffer`. Each with try/catch and clear errors (no silent fallbacks
-that would let the demo show fake data).
+> Smoke scripts (hit live endpoints): `bun run reasoning:smoke` (one structured LLM call); `bun run
+> signals:smoke` (the three real reads against mainnet `P` — prints HF/headroom/depth); `bun run feed:smoke`
+> (reads the collateral Chainlink feed `latestRoundData` + sequencer status on the demo chain).
 
 ---
 
-## 8. 1Shot permissionless relayer (`oneshot.ts`)
+## 8. 1Shot permissionless relayer (`oneshot.ts`) — as built
 
-> JSON-RPC endpoint: `https://relayer.1shotapi.com/relayers`. No signup.
-> Docs: https://1shotapi.com/docs/quickstarts/gas-sponsorship-eip7710
-> Skill: `npx skills add 1Shot-API/skills/public-relayer`
+> **Endpoint is network-split (verified):** testnets (Base Sepolia 84532, Sepolia 11155111) on
+> `https://relayer.1shotapi.dev/relayers`; mainnets on `https://relayer.1shotapi.com/relayers`. Using the wrong
+> one returns empty `{}` capabilities. Base Sepolia IS supported on `.dev` — full relayed flow runs on testnet.
+> JWKS for webhook verify: `<relayer-host>/.well-known/jwks.json`. Skill: `npx skills add 1Shot-API/skills/public-relayer`.
+> Verified Base Sepolia caps: `targetAddress 0xf1ef956eff4181Ce913b664713515996858B9Ca9`,
+> `feeCollector 0xE936e8FAf4A5655469182A49a505055B71C17604`, payment token = our USDC.
 
 ### Methods (verified)
-- `relayer_getCapabilities` — params `["<chainId>"]`. **Source of truth** for supported
-  chains, accepted payment tokens, `feeCollector`, and **`targetAddress`**. The delegation's
-  `to` (delegate) MUST equal the returned `targetAddress` or redemption fails. **Never
-  hardcode payment tokens or targetAddress** — read them here, cache per session.
-- `relayer_getFeeData` — params `{ chainId, token }` → `{ gasPrice, rate, minFee, expiry, context }`.
-  Use for a pre-bundle rough fee quote. `feeAmount = max(convertedFee, minFee)`.
-- `relayer_estimate7710Transaction` (single chain) / `relayer_estimate7710TransactionMultichain`
-  — call immediately before send with the assembled bundle (omit `context`). Returns
-  `success`, `requiredPaymentAmount`, `gasUsed`, and a signed `context` to lock the quote
-  (~45s). Prefer this `context` over `getFeeData` when the bundle exists.
-- `relayer_send7710Transaction` / `..Multichain` — submit. Include the signed `context`. For
-  **local/script signers**, include one `authorizationList` entry (the EIP-7702 authorization)
-  on first use to upgrade the EOA to a `7702StatelessDelegator` smart account. For the **browser
-  EIP-7715 flow**, the wallet handles 7702 — do NOT add `authorizationList`. Set
-  `destinationUrl` to your webhook URL.
-- `relayer_getStatus` — poll fallback. Non-terminal: Pending/Submitted. Terminal:
-  Confirmed/Rejected/Reverted.
+- `relayer_getCapabilities([chainId])` — source of truth for chains, payment tokens, `feeCollector`,
+  **`targetAddress`** (the delegation's `to` MUST equal it). Never hardcode; cache per session.
+- `relayer_getFeeData({ chainId, token })` → `{ gasPrice, rate, minFee, expiry, context }`.
+- `relayer_estimate7710Transaction` — assemble bundle (omit `context`); returns `success`,
+  `requiredPaymentAmount`, `gasUsed`, signed `context` (~45s lock). Validates + simulates; check
+  `result.success` before send.
+- `relayer_send7710Transaction` — include the signed `context`; for local signers include one
+  `authorizationList` entry (7702 upgrade) on first use; set `destinationUrl`. Returns a `TaskId`.
+- `relayer_getStatus({ id, logs })` — poll fallback. Terminal: 200 Confirmed / 400 Rejected / 500 Reverted.
 
-### Build order for the relayed stake
-1. `relayer_getCapabilities(chainId)` → pick payment token + read `targetAddress`.
-2. Build the delegation for the stake with `to = targetAddress`, scoped to (a) the USDC fee
-   transfer to `feeCollector` and (b) the stake call to `ConsiliumMarket`. Sign it.
-   For local signers, produce the EIP-7702 authorization (one-time upgrade).
-3. `relayer_estimate7710Transaction` with the bundle → get `requiredPaymentAmount` + `context`.
-   If `requiredPaymentAmount` ≠ your mocked fee, update the fee execution amount + delegation
-   scope, re-sign, re-estimate.
-4. `relayer_send7710Transaction` with `context` + `destinationUrl` → returns `TaskId`.
-5. Track via webhook (preferred) and `relayer_getStatus` (fallback) to terminal state.
+### Build order for the relayed stake (as built in `relayStake.ts`)
+1. `getCapabilities` → token + `targetAddress`. 2. Build the two-delegation bundle (§6.3), sign. 3. estimate →
+adjust fee to `requiredPaymentAmount`, re-sign, re-estimate. 4. send with `context` (+ `destinationUrl`). 5.
+track via webhook (preferred) + `getStatus` (fallback). Fresh `salt` each time; serialize bigints to hex.
 
-### Implementation notes
-- Fresh delegation `salt` every time (avoid replay collisions).
-- Serialize all bigint/bytes to hex before JSON-RPC.
-- Scope permissions narrowly (token, amount, target function) — no broad allowances.
-
-### Webhook server (`webhook/server.ts`)
-- Public HTTPS endpoint (tunnel) set as `destinationUrl`.
-- **Verify Ed25519 signatures against the relayer JWKS** before accepting any state
-  transition. Reject unverified events. (Fetch JWKS per the 1Shot webhook docs:
-  https://1shotapi.com/docs/dev-platform/get-started/error-handling — confirm JWKS URL.)
-- On a verified terminal event, broadcast to the web UI over SSE/WebSocket so the dashboard
-  flips from Pending → Confirmed/Reverted **driven by the real relayer**, not a timer.
+### Webhook server (`webhook/server.ts`) — as built
+Public HTTPS endpoint (tunnel) set as `destinationUrl`. **Verify Ed25519 signatures against the relayer JWKS**
+(canonical JSON sans `signature`, `safe-stable-stringify`) before trusting any event; reject unverified. On a
+verified terminal event, broadcast over SSE/WS so the dashboard flips Pending→Confirmed/Reverted from the real
+relayer. *As built:* verify path + JWKS import tested; live delivery needs a tunnel (polling proven as fallback).
 
 ---
 
-## 9. Round orchestration (`fundManager.ts` + `roundRunner.ts`)
+## 9. Round orchestration (`roundRunner.ts`) — to rework for the solvency round
 
 One full round, all real:
-1. **Setup**: deploy/ensure all 4 smart accounts; fund Bull/Bear with test USDC. Create root
-   delegation (human → fund-manager). Fund-manager **redelegates** capped budgets to Bull & Bear.
-2. **Research market opens**: research x402 seller is up. Bull & Bear each, driven by Venice
-   chat reasoning, **buy** the balance read (x402 + 7710). Pricing is dynamic; the amount each
-   commits is logged as its confidence signal. Multiple buys allowed until an agent's
-   evidence is "sufficient" or it nears its self-imposed research budget (a fraction of its cap).
-3. **Stake**: each agent stakes YES/NO on `ConsiliumMarket` via the **1Shot-relayed** 7710
-   transaction (gas in USDC). UI shows pending → confirmed from the webhook.
-4. **Over-cap demo** (on flag): the designated agent attempts an over-cap stake → enforcer
-   revert → red card with real failed tx hash.
-5. **Resolve**: after deadline, call `resolve()` (can be relayed too). Contract reads watched
-   wallet balance, settles outcome.
-6. **Card**: generate Venice image verdict card; winners `claim()`.
-7. Every step emits a typed event consumed by the UI with the real tx hash / explorer link.
+1. **Setup**: ensure the 4 smart accounts (7702-upgraded); fund traders with test USDC. Root delegation (human
+   → fund-manager) → redelegate capped budgets to Bull & Bear → each redelegates to an executor (3-level chain,
+   signed + emitted). Compute position `P`'s liquidation price; create `ConsiliumMarket` via the factory with
+   the collateral Chainlink feed, sequencer feed, liquidation price, direction, and a **tight, near-the-money
+   window `W`** (demo seam, §0).
+2. **Research opens**: research x402 seller up. Bull (LIQUIDATABLE) & Bear (SAFE) each, driven by LLM reasoning
+   over **purchased tiered signals** (health → headroom → liquidity, x402 + 7710). Deeper signals cost more;
+   total committed per agent = its costly confidence signal.
+3. **Stake**: each agent stakes via the **1Shot-relayed** 7710 tx (gas in USDC). UI flips Pending→Confirmed from
+   the webhook. The YES/NO pot split *is* the published liquidation probability.
+4. **Over-cap demo** (flag): designated agent attempts an over-cap stake → enforcer revert at the
+   trader→executor hop → red card with real failed tx hash.
+5. **Resolve**: `roundRunner` calls `poke()` periodically while open; if the Chainlink price crosses the
+   liquidation level within `W` it latches. After deadline-or-cross, `resolve()` settles LIQUIDATABLE/SAFE from
+   the real feed (with the L2 sequencer guard). *As built:* poll `resolved()` before reading outcome
+   (RPC read-after-write lag).
+6. **Card**: render the verdict card (Venice image, SVG fallback); winners `claim()`.
+7. Every step emits a typed `RoundEvent` (in `@consilium/shared` `types.ts`) with the real tx hash / feed read /
+   explorer link — the UI subscribes (§10).
 
-`roundRunner.ts` exposes a CLI (`pnpm round:run`, `pnpm round:run --demo-overcap`) and an
-HTTP trigger the UI can call. It must be idempotent enough to re-run for the video.
-
----
-
-## 10. Web dashboard (`packages/web`, Next.js App Router)
-
-> Read the frontend-design skill conventions if available. Keep it clean, flat, dark-mode safe.
-
-- **`/market`** is the star. It subscribes (SSE/WS) to round events and renders, in real time:
-  - The question (wallet `W`, threshold `T`, deadline `D`) + a live countdown.
-  - Two agent columns (Bull/Bear) showing: redelegated cap, USDC committed to evidence so far,
-    number of data buys, current stance & size, each with the **real tx hash** linking to
-    `sepolia.basescan.org`.
-  - A "data price" ticker that rises as agents buy (the costly-signal visual — this is the
-    moment that out-stories Intento's static "confidence: 0.87" label).
-  - The stake transactions with live Pending→Confirmed status **driven by the 1Shot webhook**.
-  - The over-cap attempt as a red "Rejected by caveat enforcer" card with the failed tx hash.
-  - On resolution: the Venice-generated verdict card image, plus claim buttons.
-- **Wallet connect** via MetaMask for the human's root grant (ERC-7715 advanced permissions
-  is the polished path; a smart-account signer is the headless fallback).
-- **No hardcoded state.** If an event hasn't happened, show an empty/pending state — never a
-  pre-filled number. Every figure on screen must come from a real event with a tx hash. This
-  is the explicit anti-Intento rule: a judge clicking any number should reach a real explorer
-  page.
+`roundRunner.ts` exposes a CLI (`bun run round:run`, `bun run round:run --demo-overcap`) + an HTTP trigger;
+idempotent enough to re-run for the video. *As built (pre-pivot):* `runRound(onEvent)` is wired end-to-end for
+the balance question (create→redelegate→buy→reason→stake→resolve→claim, verified live) — the rework swaps the
+question/signals/resolution per the above; the orchestration shape stays.
 
 ---
 
-## 11. Build order (do it in this sequence; commit at each step)
+## 10. Web dashboard (`packages/web`, Next.js App Router) — as built shell; rework copy for solvency
 
-1. **Repo + tooling**: pnpm workspaces, foundry project, `.env.example`, shared `env.ts`/`chains.ts`.
-2. **Contracts**: `ConsiliumMarket.sol` + `MockUSDC.sol`, full test suite green
-   (`forge test -vvv`), `Deploy.s.sol`, deploy to Base Sepolia, write `deployments/84532.json`.
-3. **Venice client**: `venice.ts` with chat/rpc/image, each verified against a live call
-   (write a `pnpm venice:smoke` script that hits all three and prints results).
-4. **Smart accounts + delegation**: create/deploy the 4 smart accounts; root delegation +
-   redelegation; a `pnpm delegation:smoke` that signs a redelegation and prints the chain.
-5. **x402 seller + buyer**: stand up `researchServer.ts`; `buyerClient.ts` completes a real
-   paid call end-to-end on Base Sepolia (`pnpm x402:smoke`). Confirm a settled USDC payment.
-6. **1Shot relayer**: `oneshot.ts` — capabilities → estimate → send a relayed stake; webhook
-   server verifying Ed25519. `pnpm oneshot:smoke` relays one stake and shows webhook status.
-7. **Round runner**: wire 4–9 together; run a full round headless; verify every tx onchain.
-8. **Over-cap revert**: implement the flag; capture the real revert; assert it in `Revert.t.sol`
-   too.
-9. **Web dashboard**: SSE from the round runner + webhook server; render real state.
-10. **README + DEMO.md**: quickstart and the exact 3-minute video script (below).
+> Brand: **Mono Terminal** (`brand.md`) — near-black neutral, color = signal only (YES/LIQUIDATABLE green or
+> red per framing, pending amber, reject red), JetBrains Mono on every number/hash, Inter for text, shadcn/ui +
+> Tailwind v4, dark. It's a **live command center, not a dashboard.**
 
-Acceptance gate per step: a smoke script that proves the step works against the live
-testnet/relayer/Venice — no mocks in the acceptance path.
+- **`/market`** subscribes (SSE/WS) to `RoundEvent`s + the 1Shot webhook and renders, in real time:
+  - The question: position `P`, **current price vs liquidation price**, window `W` + countdown, live collateral
+    price ticking toward/away from the strike.
+  - Two agent trading-desk columns (Bull=LIQUIDATABLE / Bear=SAFE): redelegated cap, USDC committed to evidence,
+    **which signal tiers each bought**, stance & size, each with the real tx hash ↗.
+  - A **"published probability"** readout = YES pot / total pot, updating live as agents stake — the oracle's
+    output, the thing a consumer would buy.
+  - An **evidence-spend meter** per agent rising as it buys deeper tiers (the costly-signal visual).
+  - Stake txs with live Pending→Confirmed from the **webhook**; the over-cap **red "Rejected by enforcer"** card
+    with the failed tx hash; on resolution the verdict card + claim.
+- Browser viem clients use the **public** RPC; the keyed server RPC stays server-side (§3). Wallet connect via
+  MetaMask for the human's root grant.
+- **No hardcoded state.** Every figure ← a real event: a tx hash, a Chainlink feed read, or a webhook. A judge
+  clicking any number reaches a real explorer page.
 
----
-
-## 12. Demo video script (`docs/DEMO.md`) — what wins
-
-~3 minutes, every claim backed by a visible tx:
-1. **(20s) Frame the anti-pattern**: "Most agent demos sign a delegation tree and show a
-   dashboard of numbers that aren't real. Watch every number here resolve to an onchain tx."
-2. **(30s) Human grants once**: MetaMask popup, human → fund-manager root delegation
-   (ERC-7715). Show the fund-manager **redelegating** capped budgets to Bull & Bear — point at
-   the `parentDelegation` chain.
-3. **(40s) Live adversarial market**: Bull and Bear reason (Venice), then **buy the same
-   balance read** from the research agent. Show the x402 402-challenge → PAYMENT-SIGNATURE →
-   settled USDC. Show the **data-price ticker rising** as they compete for evidence — narrate
-   "confidence is now a costly signal: the bluffing agent can't afford to look sure."
-4. **(30s) Relayed stakes**: both stake via 1Shot, **gas paid in USDC**, UI flips
-   Pending→Confirmed from the **webhook**. Click a hash → Basescan.
-5. **(20s) THE REVERT**: the over-cap agent tries to stake past its budget → red "Rejected by
-   caveat enforcer" card, real failed tx hash on Basescan. "No app code rejected this. The
-   chain did. The cap is structural."
-6. **(20s) Resolve + card**: deadline passes, `resolve()` reads the watched wallet's real USDC
-   balance, outcome settles, **Venice generates the verdict card** showing who was right and
-   how much each committed. Winners claim.
-7. **(10s) Close**: one human signature → a bounded, adversarial, multi-agent onchain market.
-   Four sponsors, each load-bearing.
+*As built:* the command-center shell, landing page, all six sections (question hero, agent desks, event
+timeline, x402 evidence panel, reject card, resolution+Venice-card slot) are built static against real
+last-round data. Rework: re-point copy/data from "balance ≥ threshold" to "price vs liquidation price /
+LIQUIDATABLE-SAFE / published probability," then wire live (SSE + webhook).
 
 ---
 
-## 12b. Primitive-coverage table (put this in the README — make the rigor legible)
+## 11. Build order (commit at each step) — pivot deltas marked
+1. **Repo + tooling** — ✅ done (bun workspaces, foundry, `.env.example`, shared `env.ts`/`chains.ts`).
+2. **Contracts** — ✅ v1 done; **rework**: add `MockAggregator.sol`, change `ConsiliumMarket` resolution to
+   Chainlink price-cross + sequencer guard + `poke()` (keep push-model stake + factory), update tests
+   (sequencer-guard + price-cross), redeploy to Base Sepolia pointing at a **real Chainlink feed**.
+3. **Reasoning + risk signals** — ✅ reasoning done (Venice); **rework** `rpc.ts` to Aave HF / headroom / DEX
+   depth; add `bun run signals:smoke` + `feed:smoke` (reasoning:smoke stays).
+4. **Smart accounts + delegation** — ✅ done (7702, 3-level chain, `delegation:smoke`).
+5. **x402 seller + buyer** — ✅ settlement done; **rework** seller to the three tiered routes.
+6. **1Shot relayer** — ✅ done (`oneshot.ts`, relayed stake live, webhook verify); wire live webhook via tunnel.
+7. **Round runner** — ✅ v1 done; **rework** to the solvency round (poke/resolve from feed, tiered buys).
+8. **Over-cap revert** — ✅ done (`overcap.ts`, real reverted tx).
+9. **Web dashboard** — ✅ shell + landing done; **rework** copy + wire SSE/webhook live.
+10. **README + DEMO.md** — quickstart, primitive table, 3-min script, "Deploy your own agent" + "Future work."
 
-Rival "DelegAI" wins points by *enumerating* "10+ Smart Accounts Kit APIs" so judges can check
-boxes. We use the same breadth — advertise it. Maintain this table in the README and keep it
-true; every row must point at a real file/usage, no aspirational entries.
+Acceptance gate per step: a smoke script proving it against the live testnet/relayer/feed — no mocks in the
+acceptance path.
 
-| Primitive / API | Package | Where used in Consilium |
+---
+
+## 12. Demo video script (`docs/DEMO.md`) — what wins (~3 min, every claim a visible tx/feed read)
+1. **(25s) Frame the real problem**: "Millions of lending positions, no liquid market tells you which are about
+   to get liquidated in the next hour — human markets can't form that granularly. Consilium spins up an
+   agent-run risk oracle per position. And unlike demos showing numbers that aren't real, watch every number
+   here resolve to an onchain event."
+2. **(30s) Human grants once, three-level chain**: MetaMask popup, human → fund-manager → Bull & Bear →
+   executor keys; point at the `parentDelegation` chain three levels deep. "One signature, fanned into a
+   cryptographically bounded agent hierarchy."
+3. **(45s) Live adversarial research**: show real position `P` — live Aave HF + how far collateral must fall to
+   liquidate. Bull (LIQUIDATABLE) and Bear (SAFE) reason, then **buy real risk signals** (health → headroom →
+   liquidity); show the x402 402-challenge → settled USDC and the **evidence-spend meter** rising — "confidence
+   is a costly signal; the bluffer can't afford the deep data. Peers paying peers for real onchain intelligence."
+4. **(30s) Relayed stakes → a published probability**: both stake via 1Shot, **gas in USDC**, UI flips
+   Pending→Confirmed from the **webhook**. The pot split updates the **live liquidation probability** — "that
+   number is the product; a liquidator bot would pay x402 to read it."
+5. **(25s) THE REVERT (money-moment)**: over-cap agent → reverts at the `ERC20TransferAmount` enforcer, real
+   failed tx on Basescan. "No app code rejected this — the chain did, three hops from the human. That's *why*
+   the oracle can't be manipulated past an agent's bonded stake. Structural, not aspirational."
+6. **(15s) Resolve against a real feed**: collateral's Chainlink price crosses (tight demo window), `resolve()`
+   settles LIQUIDATABLE/SAFE from `latestRoundData` with the L2 sequencer guard; verdict card; winners claim.
+   Say openly: "production window is hours; we tightened it so it resolves on camera."
+7. **(10s) Close**: one human signature → an autonomous, bounded, adversarial risk oracle producing a sellable
+   signal. Three sponsors (MetaMask Smart Accounts, x402, 1Shot), each load-bearing.
+
+---
+
+## 12b. Primitive-coverage table (README) — keep true, no aspirational entries
+
+| Primitive / API | Package | Where used |
 |---|---|---|
-| `toMetaMaskSmartAccount` (Hybrid) | smart-accounts-kit | `smartAccount.ts` — all 4 actors + executors |
-| `Implementation.Hybrid` | smart-accounts-kit | smart account creation |
+| `toMetaMaskSmartAccount` (`Stateless7702`) | smart-accounts-kit | `smartAccount.ts` — all 4 actors + executors (7702 in-place) |
+| `Implementation.Stateless7702` + 7702 `signAuthorization` | smart-accounts-kit + viem | `smartAccount.ts` upgrade; `accounts:upgrade` |
 | `createDelegation` + `parentDelegation` | smart-accounts-kit | `delegation.ts` — manager→trader redelegation (§5.3) |
 | 3rd-hop `createDelegation` | smart-accounts-kit | `delegation.ts` — trader→executor (§5.4) |
-| `createOpenDelegation` | smart-accounts-kit | `buyerClient.ts` — x402 buyer open delegation (§6.2) |
-| `signDelegation` | smart-accounts-kit | every hop signs its delegation |
-| `hashDelegation` | smart-accounts-kit/utils | linking child `authority` to parent; smoke assertions (§5.4) |
-| `createCaveatBuilder` | smart-accounts-kit/utils | `LimitedCalls` / scope-narrowing caveats |
-| `CaveatType.Redeemer` | smart-accounts-kit | restrict buyer delegation to facilitator (§6.2) |
-| `CaveatType.LimitedCalls` | smart-accounts-kit | single-use redelegation constraint |
-| `ScopeType.Erc20TransferAmount` | smart-accounts-kit | every USDC-scoped delegation |
-| `encodeDelegations` | smart-accounts-kit/utils | building x402 `permissionContext` (§6.2) |
-| `DelegationManager` (env) | smart-accounts-kit | x402 payload `delegationManager` field |
+| `signDelegation` / `hashDelegation` | smart-accounts-kit(/utils) | every hop signs; cap/authority assertions (`delegation:smoke`) |
+| `ScopeType.Erc20TransferAmount` / `ScopeType.FunctionCall` | smart-accounts-kit | capped transfers + `market.stake` in the relayed bundle (§6.3) |
+| `createx402DelegationProvider` + `x402Erc7710Client` | smart-accounts-kit/experimental + @metamask/x402 | buyer auto-pays (§6.2) |
+| `x402ExactEvmErc7710ServerScheme` | @metamask/x402 | research seller scheme (§6.1) |
+| ERC-7710 `assetTransferMethod` (MetaMask facilitator) | @metamask/x402 + tx-sentinel | settled USDC payment (§6) |
+| `DelegationManager.redeemDelegations` | smart-accounts-kit/contracts | over-cap direct redemption (§6.4) |
 | `ERC20TransferAmountEnforcer` | toolkit deployment | the over-cap revert money-moment (§6.4) |
-| x402 `exact` EVM scheme (seller+buyer) | @x402/evm | research seller + trader buyers (§6) |
-| ERC-7710 `assetTransferMethod` | x402 + toolkit | delegation-based payment settlement (§6) |
-| EIP-7702 stateless-delegator upgrade | 1Shot relayer | `oneshot.ts` first-use `authorizationList` (§8) |
 | `relayer_getCapabilities/getFeeData/estimate7710/send7710/getStatus` | 1Shot | `oneshot.ts` full relay lifecycle (§8) |
 | 1Shot webhook + Ed25519/JWKS verify | 1Shot | `webhook/server.ts` — UI status source (§8) |
-| Venice `chat/completions` | Venice | agent reasoning (§7.1) |
-| Venice `crypto/rpc` | Venice | the data agents buy (§7.2) |
-| Venice `image/generations` | Venice | resolution verdict card (§7.3) |
+| `AggregatorV3Interface` + L2 Sequencer Uptime feed | @chainlink/contracts | `ConsiliumMarket` resolution + guard (§4) |
+| Aave v3 `getUserAccountData` | onchain read | `rpc.ts` health-factor signal (§7.2) |
 
-## 12c. Competitive positioning (why Consilium beats the strong field, not just Intento)
-
-Internalize these so the README/demo emphasize the right contrasts. Do not name rivals in the
-submission — just make sure Consilium visibly out-does each one's strength:
-
-- **vs DelegAI (rigor / primitive count):** match its breadth via §12b, then go *deeper* — a
-  **3-level** chain (Human→manager→trader→executor) vs its master→worker. Same primitives,
-  deeper attenuation story.
-- **vs SwifterAI (full-stack polish + custom facilitator):** equal the multi-agent + 1Shot
-  routing; concede the custom facilitator as documented v2 (the seam is built, §6.1 note). Win
-  back on the *legible live demo* (every number → real tx) and multimodal Venice.
-- **vs Clawmes (raw capability):** don't try to out-tool a 53-tool product. Win on **sharpness
-  and verifiability** — one resolvable question, one market, every event provable onchain in 3
-  minutes. Breadth loses to a crisp, judge-verifiable thesis.
-- **vs r402 (clean "no self-reported claims" idea):** adopt its spirit — our costly-signal
-  mechanic *is* "confidence you can't fake," and the enforcer revert *is* "the chain says no."
-  We have its philosophical cleanliness **plus** a full four-sponsor flow.
-- **vs VVVKernel / Artisan (focused Venice/x402 products):** we beat the Venice track outright
-  with **three load-bearing Venice endpoints incl. image** — none of them use multimodal.
-- **The field-wide gaps we occupy:** (1) only project using Venice multimodal; (2) only true
-  *peer* A2A market (not a fan-out tree); (3) only demo where a judge can click any figure and
-  hit a real explorer page.
+## 12c. Competitive positioning (do not name rivals in the submission)
+- **vs DelegAI (rigor):** match its primitive breadth (§12b), then go *deeper* — a 3-level chain vs master→worker;
+  the revert proves enforcement three hops out.
+- **vs SwifterAI (polish / custom facilitator):** equal the multi-agent + 1Shot routing; concede the custom
+  facilitator as documented v2 (seam built, §6.1). Win on the *legible live demo* — every number → real tx.
+- **vs Clawmes (raw capability):** win on **sharpness + a real product** — an agent-run risk oracle per position,
+  every event provable onchain in 3 minutes.
+- **vs r402 ("no self-reported claims"):** our costly-signal mechanic *is* "confidence you can't fake," the
+  enforcer revert *is* "the chain says no" — plus a full three-sponsor settled flow producing a sellable signal.
+- **Field-wide gaps we occupy:** (1) the only *true peer* A2A market producing a **priced, money-backed
+  signal**, not a fan-out tree; (2) the only demo where any figure clicks through to a real explorer / Chainlink
+  feed; (3) 1Shot webhooks driving live UI status.
+- **Note on Venice:** a **bonus, not a pillar** — reasoning on Venice + the verdict card, both natural
+  components (honest, not bolt-on). The thesis stays the three infra rails; Venice is upside picked up ~free.
 
 ---
 
 ## 13. Guardrails (re-read before you ship)
-- **Never fake state.** Every UI figure ← a real event + tx hash. No timers standing in for
-  webhooks. No hardcoded balances. This is the whole competitive thesis.
+- **Never fake state.** Every UI figure ← a real event + tx hash / Chainlink feed read / webhook. No timers
+  standing in for webhooks. This is the whole competitive thesis.
 - **Don't pre-empt the enforcer revert in app code** — submit the over-cap tx for real.
-- **Don't hardcode** relayer payment tokens, `targetAddress`, Venice model ids, or the USDC
-  test address — discover each from its source at runtime/build time.
+- **Check the L2 sequencer feed before trusting a Chainlink price** (`SequencerDown`/`GracePeriodNotOver`) — it's
+  correct *and* a credibility signal.
+- **State the demo seam openly** — tight window + near-the-money strike; the price is real, only `W`/strike are
+  tightened. Never imply the position truly liquidated if it didn't.
+- **Don't hardcode** relayer tokens/`targetAddress`, the relayer endpoint (pick by chain), LLM model ids, the
+  USDC address, the Aave pool, the Chainlink feed, or the sequencer feed — discover each at runtime/build time.
 - **Verify webhook signatures** before trusting any status.
+- **Never expose the private RPC** (or any keyed secret) to the browser; agents/server use `getServerRpcUrl()`,
+  the client uses the public RPC.
 - Use fresh throwaway keys; small amounts; never commit secrets.
-- If a sponsor API shape differs from this doc, **fetch the cited doc URL and follow the live
-  version** — then update this file's note so we stay honest.
-```
+- If a sponsor API shape differs from this doc, **fetch the cited doc URL and follow the live version** — then
+  update this file's note so we stay honest.
