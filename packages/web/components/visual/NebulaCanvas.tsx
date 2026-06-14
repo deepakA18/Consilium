@@ -76,34 +76,45 @@ export function NebulaCanvas({ className, edgeFade = true }: { className?: strin
       return;
     }
 
-    const compile = (type: number, src: string) => {
-      const s = gl.createShader(type)!;
-      gl.shaderSource(s, src);
-      gl.compileShader(s);
-      return s;
+    let uRes: WebGLUniformLocation | null = null;
+    let uTime: WebGLUniformLocation | null = null;
+    let uMouse: WebGLUniformLocation | null = null;
+
+    // (Re)build every GL resource. Safe to call again after a context restore, when the program,
+    // buffer, and uniform locations created under the previous context have all been invalidated.
+    const setup = (): boolean => {
+      const compile = (type: number, src: string) => {
+        const s = gl.createShader(type)!;
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        return s;
+      };
+      const prog = gl.createProgram()!;
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
+      gl.useProgram(prog);
+
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, "p");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+      uRes = gl.getUniformLocation(prog, "u_res");
+      uTime = gl.getUniformLocation(prog, "u_time");
+      uMouse = gl.getUniformLocation(prog, "u_mouse");
+      const uNoedge = gl.getUniformLocation(prog, "u_noedge");
+      gl.uniform1f(uNoedge, edgeFade ? 0 : 1);
+      return true;
     };
-    const prog = gl.createProgram()!;
-    gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
-    gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+
+    if (!setup()) {
       canvas.style.display = "none";
       return;
     }
-    gl.useProgram(prog);
-
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(prog, "p");
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-
-    const uRes = gl.getUniformLocation(prog, "u_res");
-    const uTime = gl.getUniformLocation(prog, "u_time");
-    const uMouse = gl.getUniformLocation(prog, "u_mouse");
-    const uNoedge = gl.getUniformLocation(prog, "u_noedge");
-    gl.uniform1f(uNoedge, edgeFade ? 0 : 1);
 
     const mouse = { x: 0.5, y: 0.5 };
     const target = { x: 0.5, y: 0.5 };
@@ -128,13 +139,14 @@ export function NebulaCanvas({ className, edgeFade = true }: { className?: strin
 
     let raf = 0;
     let visible = true;
+    let lost = false;
     const io = new IntersectionObserver((es) => (visible = es[0]?.isIntersecting ?? true), { threshold: 0 });
     io.observe(canvas);
 
     const start = performance.now();
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
-      if (!visible) return;
+      if (!visible || lost) return;
       mouse.x += (target.x - mouse.x) * 0.04;
       mouse.y += (target.y - mouse.y) * 0.04;
       gl.uniform2f(uRes, canvas.width, canvas.height);
@@ -145,11 +157,33 @@ export function NebulaCanvas({ className, edgeFade = true }: { className?: strin
     };
     raf = requestAnimationFrame(frame);
 
+    // The browser can reclaim the WebGL context (GPU memory pressure, driver reset, long idle —
+    // Brave/Chrome are aggressive). preventDefault() marks it restorable; on restore we rebuild the
+    // GL resources and resume, instead of leaving a blank canvas until the page is reloaded.
+    const onLost = (e: Event) => {
+      e.preventDefault();
+      lost = true;
+      cancelAnimationFrame(raf);
+    };
+    const onRestored = () => {
+      if (!setup()) {
+        canvas.style.display = "none";
+        return;
+      }
+      resize();
+      lost = false;
+      raf = requestAnimationFrame(frame);
+    };
+    canvas.addEventListener("webglcontextlost", onLost, false);
+    canvas.addEventListener("webglcontextrestored", onRestored, false);
+
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
       io.disconnect();
       window.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("webglcontextlost", onLost);
+      canvas.removeEventListener("webglcontextrestored", onRestored);
       gl.getExtension("WEBGL_lose_context")?.loseContext();
     };
   }, []);
