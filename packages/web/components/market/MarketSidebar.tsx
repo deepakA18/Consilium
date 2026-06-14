@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { LayoutGrid, TrendingUp, TrendingDown, Receipt, Flag, ExternalLink, LogOut, Boxes } from "lucide-react";
+import { Logo } from "@/components/Logo";
 import { addressUrl, positionUrl, positionTxUrl, shortAddr } from "@/lib/explorer";
 import type { RoundVM } from "@/lib/round-data";
 
@@ -13,9 +14,7 @@ export function MarketSidebar({ round }: { round: RoundVM }) {
     <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border bg-card px-6 py-7 lg:flex">
       {/* brand */}
       <div className="flex items-center gap-2.5">
-        <span className="grid size-7 place-items-center rounded-lg bg-foreground text-background">
-          <Boxes className="size-4" />
-        </span>
+        <Logo className="size-7 text-foreground" />
         <span className="font-display text-base font-bold tracking-[0.16em]">CONSILIUM</span>
       </div>
 

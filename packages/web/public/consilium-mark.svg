@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="-100 -100 200 200" role="img" aria-labelledby="t d">
+  <title id="t">Consilium</title>
+  <desc id="d">Consilium mark, solid white</desc>
+  <g id="blades">
+    <path d="M 2.12 -17.68 L 66.47 -66.47 L 17.68 -2.12 Z" fill="#FFFFFF"/>
+    <path d="M -2.12 17.68 L -66.47 66.47 L -17.68 2.12 Z" fill="#FFFFFF"/>
+    <path d="M -17.68 -2.12 L -66.47 -66.47 L -2.12 -17.68 Z" fill="#FFFFFF"/>
+    <path d="M 17.68 2.12 L 66.47 66.47 L 2.12 17.68 Z" fill="#FFFFFF"/>
+  </g>
+  <g id="core">
+    <path d="M 0 -22.00 Q 9.00 0 0 22.00 Q -9.00 0 0 -22.00 Z" fill="#FFFFFF"/>
+    <circle cx="0" cy="0" r="4.60" fill="#000000"/>
+  </g>
+</svg>

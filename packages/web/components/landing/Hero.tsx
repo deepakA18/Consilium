@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { NebulaCanvas } from "@/components/visual/NebulaCanvas";
+import { Logo } from "@/components/Logo";
 
 /**
  * Full-viewport animated hero. A WebGL nebula that fades to near-black at the edges and melts into
@@ -22,7 +23,10 @@ export function Hero() {
       <div className="relative mx-auto flex min-h-[100svh] max-w-6xl flex-col px-6">
         {/* nav */}
         <nav className="flex items-center justify-between py-5">
-          <span className="font-display text-sm font-bold tracking-[0.2em]">CONSILIUM</span>
+          <span className="flex items-center gap-2.5">
+            <Logo className="size-6 text-foreground" />
+            <span className="font-display text-sm font-bold tracking-[0.2em]">CONSILIUM</span>
+          </span>
         </nav>
 
         {/* centerpiece */}
