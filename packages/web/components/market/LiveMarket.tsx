@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronDown, ExternalLink, Boxes, Play, Loader2, PenLine } from "lucide-react";
+import { ArrowLeft, ChevronDown, ExternalLink, Boxes, Play, Loader2, PenLine, WifiOff, Inbox } from "lucide-react";
 import { useAccount } from "wagmi";
+import { Logo } from "@/components/Logo";
 import { WalletButton } from "@/components/WalletButton";
 import { GrantDialog } from "@/components/market/GrantDialog";
 import { useGrant } from "@/lib/use-grant";
 import { addressUrl, shortAddr } from "@/lib/explorer";
-import { cn } from "@/lib/utils";
 import { MarketSidebar } from "@/components/market/MarketSidebar";
 import { ProbabilityHero } from "@/components/market/ProbabilityHero";
 import { MetricCards } from "@/components/market/MetricCards";
@@ -18,8 +18,8 @@ import { AgentsCard, EvidenceCard } from "@/components/market/BottomCards";
 import { RejectCard } from "@/components/market/RejectCard";
 import { ActivityList } from "@/components/market/ActivityList";
 import { VerdictCards } from "@/components/market/VerdictCards";
-import { DEMO_ROUND, SIDE_LABEL } from "@/lib/round-data";
-import { useLiveRound, runLiveRound } from "@/lib/use-live-round";
+import { SIDE_LABEL, type RoundVM } from "@/lib/round-data";
+import { useLiveRound, runLiveRound, type LiveStatus } from "@/lib/use-live-round";
 
 export function LiveMarket() {
   const { round: live, status, running } = useLiveRound();
@@ -27,16 +27,42 @@ export function LiveMarket() {
   const { grant, granting, granted, error: grantError } = useGrant();
   const [starting, setStarting] = useState(false);
   const [grantOpen, setGrantOpen] = useState(false);
-  const round = live ?? DEMO_ROUND;
-  const isLive = live != null;
-  const resolved = round.state === "resolved";
-  const won = (side: string) => resolved && side === round.resolution.outcome;
-
   async function handleRun() {
     setStarting(true);
     await runLiveRound();
     setTimeout(() => setStarting(false), 4000); // events take over from here
   }
+
+  const runControls = (
+    <RunControls
+      round={live}
+      running={running}
+      isConnected={isConnected}
+      granted={granted}
+      status={status}
+      starting={starting}
+      onRun={handleRun}
+      onGrant={() => setGrantOpen(true)}
+    />
+  );
+  const grantDialog = (
+    <GrantDialog open={grantOpen} onClose={() => setGrantOpen(false)} onConfirm={grant} granting={granting} error={grantError} />
+  );
+
+  // No round to show yet: the hub serves the last completed round over SSE, so this only appears
+  // while connecting, when the hub is offline, or before any round has run. Never fabricated data.
+  if (!live) {
+    return (
+      <>
+        <EmptyMarket status={status} controls={runControls} />
+        {grantDialog}
+      </>
+    );
+  }
+
+  const round: RoundVM = live;
+  const resolved = round.state === "resolved";
+  const won = (side: string) => resolved && side === round.resolution.outcome;
 
   return (
     <div className="theme-light flex min-h-screen bg-background text-foreground">
@@ -54,46 +80,7 @@ export function LiveMarket() {
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
-              {/* live status / run control */}
-              {isLive ? (
-                <span
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-semibold",
-                    running ? "bg-pending/15 text-pending" : "bg-yes/15 text-yes",
-                  )}
-                >
-                  <span className={cn("size-1.5 rounded-full", running ? "animate-pulse bg-pending" : "bg-yes")} />
-                  {running ? "LIVE" : `Resolved · ${SIDE_LABEL[round.resolution.outcome]}`}
-                </span>
-              ) : (
-                !isConnected ? (
-                  <button
-                    disabled
-                    title="Connect a wallet to grant the budget and run a round"
-                    className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-primary-foreground opacity-50"
-                  >
-                    <Play className="size-3.5" /> Connect wallet to run
-                  </button>
-                ) : !granted ? (
-                  <button
-                    onClick={() => setGrantOpen(true)}
-                    disabled={status !== "connected"}
-                    title="Delegate a USDC budget to the fund-manager"
-                    className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                  >
-                    <PenLine className="size-3.5" /> Grant budget
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleRun}
-                    disabled={starting || status !== "connected"}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                  >
-                    {starting ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                    {status === "connected" ? (starting ? "Starting…" : "Run live round") : status === "connecting" ? "Connecting…" : "Hub offline"}
-                  </button>
-                )
-              )}
+              {runControls}
               <span className="pill-soft hidden sm:inline-flex">
                 <Boxes className="size-3.5" /> {shortAddr(round.market)} <ChevronDown className="size-3" />
               </span>
@@ -118,7 +105,7 @@ export function LiveMarket() {
               </div>
 
               <section className="rise-in" style={{ animationDelay: "0.06s" }}>
-                <SectionHead title="Key metrics" selector={isLive && running ? "Live" : isLive ? "Final" : "Demo"} />
+                <SectionHead title="Key metrics" selector={running ? "Live" : "Final"} />
                 <MetricCards round={round} />
               </section>
 
@@ -160,7 +147,116 @@ export function LiveMarket() {
         </div>
       </main>
 
-      <GrantDialog open={grantOpen} onClose={() => setGrantOpen(false)} onConfirm={grant} granting={granting} error={grantError} />
+      {grantDialog}
+    </div>
+  );
+}
+
+/** Connect → grant → run cluster, plus the LIVE / Resolved badge once a round exists. Shared by the
+ *  topbar and the empty state so the run flow is identical in both. */
+function RunControls({
+  round,
+  running,
+  isConnected,
+  granted,
+  status,
+  starting,
+  onRun,
+  onGrant,
+}: {
+  round: RoundVM | null;
+  running: boolean;
+  isConnected: boolean;
+  granted: boolean;
+  status: LiveStatus;
+  starting: boolean;
+  onRun: () => void;
+  onGrant: () => void;
+}) {
+  if (round && round.state === "resolved") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-yes/15 px-3 py-1.5 text-[11px] font-semibold text-yes">
+        <span className="size-1.5 rounded-full bg-yes" />
+        Resolved · {SIDE_LABEL[round.resolution.outcome]}
+      </span>
+    );
+  }
+  if (running) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-pending/15 px-3 py-1.5 text-[11px] font-semibold text-pending">
+        <span className="size-1.5 animate-pulse rounded-full bg-pending" />
+        LIVE
+      </span>
+    );
+  }
+  if (!isConnected) {
+    return (
+      <button
+        disabled
+        title="Connect a wallet to grant the budget and run a round"
+        className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-primary-foreground opacity-50"
+      >
+        <Play className="size-3.5" /> Connect wallet to run
+      </button>
+    );
+  }
+  if (!granted) {
+    return (
+      <button
+        onClick={onGrant}
+        disabled={status !== "connected"}
+        title="Delegate a USDC budget to the fund-manager"
+        className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+      >
+        <PenLine className="size-3.5" /> Grant budget
+      </button>
+    );
+  }
+  return (
+    <button
+      onClick={onRun}
+      disabled={starting || status !== "connected"}
+      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+    >
+      {starting ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+      {status === "connected" ? (starting ? "Starting…" : "Run live round") : status === "connecting" ? "Connecting…" : "Hub offline"}
+    </button>
+  );
+}
+
+/** Shown when the hub has no round to serve yet (connecting, offline, or none has run). The hub
+ *  replays the last completed round over SSE, so a populated dashboard means real data — and this
+ *  screen means there genuinely isn't a round to show, rather than a fabricated placeholder. */
+function EmptyMarket({ status, controls }: { status: LiveStatus; controls: React.ReactNode }) {
+  const copy =
+    status === "connecting"
+      ? { icon: <Loader2 className="size-6 animate-spin" />, title: "Connecting to the hub…", body: "Subscribing to the live event stream." }
+      : status === "offline"
+        ? { icon: <WifiOff className="size-6" />, title: "Hub offline", body: "The last completed round will appear here once the event hub is reachable." }
+        : { icon: <Inbox className="size-6" />, title: "No round yet", body: "No round has run on this hub. Grant a budget and run one to see it here." };
+
+  return (
+    <div className="theme-light flex min-h-screen flex-col bg-background text-foreground">
+      <header className="sticky top-0 z-40 border-b border-border/60 bg-background/70 backdrop-blur-md">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6 sm:py-4 lg:px-8">
+          <Link href="/" className="flex items-center gap-2.5 text-foreground">
+            <Logo className="size-6 text-foreground" />
+            <span className="font-display text-base font-semibold tracking-tight">Liquidation-risk oracle</span>
+          </Link>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {controls}
+            <WalletButton />
+          </div>
+        </div>
+      </header>
+
+      <div className="flex flex-1 items-center justify-center px-6 py-20">
+        <div className="card-soft flex max-w-md flex-col items-center gap-3 p-10 text-center">
+          <span className="grid size-12 place-items-center rounded-2xl bg-muted/70 text-muted-foreground">{copy.icon}</span>
+          <h2 className="text-lg font-semibold">{copy.title}</h2>
+          <p className="text-sm text-muted-foreground">{copy.body}</p>
+        </div>
+      </div>
     </div>
   );
 }

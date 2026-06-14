@@ -36,7 +36,16 @@ interface LiveQuestion {
 const ACTOR: Record<string, string> = { bull: "Bull", bear: "Bear", fundManager: "Fund Manager", research: "Research", human: "Human" };
 const actorName = (r: string) => ACTOR[r] ?? r;
 const sideWord = (s: Side) => (s === "YES" ? "LIQUIDATABLE" : "SAFE");
-const hhmmss = (ts: number) => new Date(ts * 1000).toLocaleTimeString("en-GB", { hour12: false });
+// HH:MM:SS for events from today; prefixed with the date otherwise, so a replayed last round from a
+// previous day reads as old instead of looking like it just happened.
+const hhmmss = (ts: number) => {
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const time = d.toLocaleTimeString("en-GB", { hour12: false });
+  const sameDay =
+    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  return sameDay ? time : `${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} ${time}`;
+};
 
 function blankAgent(role: "bull" | "bear", side: Side, addr: string): AgentDeskVM {
   return { role, label: `${role.toUpperCase()} AGENT`, address: addr, side, capUsdc: 0, buys: [], thesis: "", confidence: 0, stakeUsdc: 0, stakeTx: "" };
