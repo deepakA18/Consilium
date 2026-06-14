@@ -34,11 +34,6 @@ const envSchema = z.object({
   // --- Test USDC (discover the current Base Sepolia test token at build time) ---
   USDC_ADDRESS: hexAddress.optional(),
 
-  // --- Market question: will WATCHED_WALLET's USDC balance exceed THRESHOLD by DEADLINE? ---
-  WATCHED_WALLET: hexAddress.optional(),
-  THRESHOLD_USDC: z.coerce.number().positive().optional(),
-  DEADLINE_UNIX: z.coerce.number().int().positive().optional(),
-
   // --- Keys (fresh throwaway keys) ---
   DEPLOYER_PRIVATE_KEY: privateKey.optional(),
   FUND_MANAGER_PRIVATE_KEY: privateKey.optional(),
@@ -83,7 +78,7 @@ const envSchema = z.object({
 export type Env = z.infer<typeof envSchema>;
 
 function loadEnv(): Env {
-  // Treat empty-string env vars (e.g. `WATCHED_WALLET=` in .env) as absent, so `.optional()`
+  // Treat empty-string env vars (e.g. `SEQUENCER_UPTIME_FEED=` in .env) as absent, so `.optional()`
   // fields fall through to undefined / their default instead of failing format validation.
   const cleaned: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
