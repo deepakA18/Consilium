@@ -1,4 +1,6 @@
-import { AddrLink, TxLink } from "@/components/ui/bits";
+import Link from "next/link";
+import { ArrowUpRight } from "lucide-react";
+import { AddrLink } from "@/components/ui/bits";
 import { cn } from "@/lib/utils";
 import { SIDE_LABEL, type AgentDeskVM } from "@/lib/round-data";
 
@@ -42,7 +44,9 @@ export function AgentDesk({ agent, won }: { agent: AgentDeskVM; won?: boolean })
         <span className="text-muted-foreground">
           <span className={cn("font-medium", accent)}>{agent.confidence}%</span> confidence · ${evidenceUsdc.toFixed(2)} evidence
         </span>
-        <TxLink hash={agent.stakeTx} label="stake tx" />
+        <Link href={`/market/agent/${agent.role}`} className="inline-flex items-center gap-1 font-medium text-foreground/70 transition-colors hover:text-foreground">
+          View reasoning <ArrowUpRight className="size-3.5" />
+        </Link>
       </div>
     </div>
   );

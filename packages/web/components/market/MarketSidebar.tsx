@@ -1,7 +1,10 @@
 import Link from "next/link";
-import { LayoutGrid, Users, Receipt, Flag, ExternalLink, LogOut, Boxes } from "lucide-react";
-import { addressUrl, shortAddr } from "@/lib/explorer";
+import { LayoutGrid, TrendingUp, TrendingDown, Receipt, Flag, ExternalLink, LogOut, Boxes } from "lucide-react";
+import { addressUrl, positionUrl, positionTxUrl, shortAddr } from "@/lib/explorer";
 import type { RoundVM } from "@/lib/round-data";
+
+// The position's real Aave v3 Borrow on Ethereum mainnet (block 25,303,986) — proof it's a live borrower.
+const POSITION_AAVE_BORROW_TX = "0x61909c68c51d73581b59960e70677eb06a036214b4bb57cba0fa49770ab7b27d";
 
 /** Left rail, iBanKo-style: brand → identity → primary nav → secondary links → exit. */
 export function MarketSidebar({ round }: { round: RoundVM }) {
@@ -22,7 +25,7 @@ export function MarketSidebar({ round }: { round: RoundVM }) {
           <Boxes className="size-5" />
         </div>
         <div className="min-w-0">
-          <Link href={addressUrl(q.position)} target="_blank" className="block truncate text-sm font-semibold hover:underline">
+          <Link href={positionUrl(q.position)} target="_blank" className="block truncate text-sm font-semibold hover:underline">
             Position {shortAddr(q.position)}
           </Link>
           <div className="text-xs text-muted-foreground">Aave v3 · {q.collateralSymbol}</div>
@@ -34,7 +37,8 @@ export function MarketSidebar({ round }: { round: RoundVM }) {
       {/* primary nav */}
       <nav className="space-y-1">
         <NavItem href="#overview" icon={<LayoutGrid className="size-[18px]" />} label="Overview" active />
-        <NavItem href="#agents" icon={<Users className="size-[18px]" />} label="Agents" />
+        <NavItem href="/market/agent/bull" icon={<TrendingUp className="size-[18px]" />} label="Bull agent" route />
+        <NavItem href="/market/agent/bear" icon={<TrendingDown className="size-[18px]" />} label="Bear agent" route />
         <NavItem href="#evidence" icon={<Receipt className="size-[18px]" />} label="Evidence" />
         <NavItem href="#resolution" icon={<Flag className="size-[18px]" />} label="Resolution" />
       </nav>
@@ -42,7 +46,8 @@ export function MarketSidebar({ round }: { round: RoundVM }) {
       {/* secondary */}
       <div className="mt-8 space-y-1 border-t border-border pt-6">
         <NavItem href={addressUrl(round.market)} icon={<ExternalLink className="size-[18px]" />} label="Market contract" external />
-        <NavItem href={addressUrl(q.position)} icon={<ExternalLink className="size-[18px]" />} label="Position" external />
+        <NavItem href={positionUrl(q.position)} icon={<ExternalLink className="size-[18px]" />} label="Position" external />
+        <NavItem href={positionTxUrl(POSITION_AAVE_BORROW_TX)} icon={<ExternalLink className="size-[18px]" />} label="Aave borrow tx" external />
       </div>
 
       {/* exit (sign-out analog) */}
@@ -62,16 +67,26 @@ function NavItem({
   label,
   active,
   external,
+  route,
 }: {
   href: string;
   icon: React.ReactNode;
   label: string;
   active?: boolean;
   external?: boolean;
+  route?: boolean;
 }) {
   const cls = `flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
     active ? "bg-accent font-semibold text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
   }`;
+  if (route) {
+    return (
+      <Link href={href} className={cls}>
+        {icon}
+        {label}
+      </Link>
+    );
+  }
   return external ? (
     <a href={href} target="_blank" rel="noreferrer" className={cls}>
       {icon}

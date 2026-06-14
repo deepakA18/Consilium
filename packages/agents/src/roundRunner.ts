@@ -10,8 +10,9 @@ import {
   type RoundEventHandler,
   type Side,
 } from "@consilium/shared";
+import { type Delegation } from "@metamask/smart-accounts-kit";
 import { makeSmartAccount, makeWalletClient, publicClient, type ConsiliumSmartAccount } from "./smartAccount.ts";
-import { buildErc20Delegation, signDelegation, isChainedTo, usdc as usdcUnits } from "./delegation.ts";
+import { buildErc20Delegation, signDelegation, isChainedTo, extractErc20MaxAmount, usdc as usdcUnits } from "./delegation.ts";
 import { llmJSON } from "./llm.ts";
 import { buildResearchApp, SIGNALS, type SignalTier } from "./researchServer.ts";
 import { aaveAccountData, priceHeadroom } from "./rpc.ts";
@@ -81,7 +82,13 @@ function computeStrike(liveAtoms8: bigint, realLiqUsd: number): bigint {
   }
 }
 
-export async function runRound(onEvent: RoundEventHandler): Promise<void> {
+/** Optional inputs for a round. `humanRoot` is a wallet-signed root grant (the connected judge);
+ *  when absent, the demo human (DEPLOYER) signs the root so the round still runs unattended. */
+export interface RoundOptions {
+  humanRoot?: Delegation;
+}
+
+export async function runRound(onEvent: RoundEventHandler, opts: RoundOptions = {}): Promise<void> {
   const keys = requireEnv([
     "DEPLOYER_PRIVATE_KEY",
     "FUND_MANAGER_PRIVATE_KEY",
@@ -98,7 +105,6 @@ export async function runRound(onEvent: RoundEventHandler): Promise<void> {
   const emit = (e: EventInput) => onEvent({ ...e, ts: now() } as RoundEvent);
 
   // Actors
-  const human = await makeSmartAccount(keys.DEPLOYER_PRIVATE_KEY as `0x${string}`);
   const fundManager = await makeSmartAccount(keys.FUND_MANAGER_PRIVATE_KEY as `0x${string}`);
   const bull = await makeSmartAccount(keys.BULL_PRIVATE_KEY as `0x${string}`);
   const bear = await makeSmartAccount(keys.BEAR_PRIVATE_KEY as `0x${string}`);
@@ -161,10 +167,30 @@ export async function runRound(onEvent: RoundEventHandler): Promise<void> {
   });
 
   // --- 3. Redelegation chain: human → fund-manager → bull/bear (A2A, cap-attenuated) ---
-  const root = await signDelegation(
-    human,
-    buildErc20Delegation({ from: human, to: fundManager.address, tokenAddress: usdc, maxAmount: usdcUnits(HUMAN_BUDGET) }),
-  );
+  // The root grant is signed by the connected wallet (the judge) when supplied; otherwise the demo
+  // human (DEPLOYER) signs it so the round still runs unattended.
+  let root: Delegation;
+  if (opts.humanRoot) {
+    root = opts.humanRoot;
+  } else {
+    const human = await makeSmartAccount(keys.DEPLOYER_PRIVATE_KEY as `0x${string}`);
+    root = await signDelegation(
+      human,
+      buildErc20Delegation({ from: human, to: fundManager.address, tokenAddress: usdc, maxAmount: usdcUnits(HUMAN_BUDGET) }),
+    );
+  }
+
+  // Scale each trader's cap to the granted budget (split across the 2 traders, capped at TRADER_CAP),
+  // so the redelegations always attenuate correctly even for a small grant.
+  const budgetWhole = (() => {
+    try {
+      return Number(extractErc20MaxAmount(root, usdc)) / 1e6;
+    } catch {
+      return HUMAN_BUDGET;
+    }
+  })();
+  const traderCap = Math.max(1, Math.min(TRADER_CAP, Math.floor(budgetWhole / 2)));
+
   for (const [role, to] of [
     ["bull", bull.address],
     ["bear", bear.address],
@@ -175,7 +201,7 @@ export async function runRound(onEvent: RoundEventHandler): Promise<void> {
         from: fundManager,
         to,
         tokenAddress: usdc,
-        maxAmount: usdcUnits(TRADER_CAP),
+        maxAmount: usdcUnits(traderCap),
         parentDelegation: root,
       }),
     );
@@ -183,7 +209,7 @@ export async function runRound(onEvent: RoundEventHandler): Promise<void> {
       kind: "delegation:granted",
       from: "fundManager",
       to: role,
-      capUsdc: String(TRADER_CAP),
+      capUsdc: String(traderCap),
       authorityChained: isChainedTo(redel, root),
     });
   }
@@ -192,7 +218,6 @@ export async function runRound(onEvent: RoundEventHandler): Promise<void> {
   const { app } = buildResearchApp();
   const server = app.listen(RESEARCH_PORT);
   await new Promise<void>((res) => server.once("listening", () => res()));
-  const tiers = Object.keys(SIGNALS) as SignalTier[];
 
   const traders: Trader[] = [
     { role: "bull", side: "YES", sideNum: 1, account: bull, pk: keys.BULL_PRIVATE_KEY as `0x${string}` },
@@ -205,8 +230,8 @@ export async function runRound(onEvent: RoundEventHandler): Promise<void> {
       const fetchWithPayment = makeBuyerFetch(t.account);
       const signals: Record<string, Record<string, unknown>> = {};
 
-      // 4a. Buy each tiered signal via x402 (real settled USDC).
-      for (const tier of tiers) {
+      // Buy one tiered signal via x402 (real settled USDC) and emit it.
+      const buySignal = async (tier: SignalTier) => {
         const sig = SIGNALS[tier];
         const res = await fetchWithPayment(`http://localhost:${RESEARCH_PORT}${sig.path}`, { method: "GET" });
         const body = (await res.json()) as { tier: string; data: Record<string, unknown> };
@@ -228,36 +253,53 @@ export async function runRound(onEvent: RoundEventHandler): Promise<void> {
           cumulativeUsdc: evidenceCumulative.toFixed(2),
           txHash: evTxHash,
         });
-      }
+      };
 
-      // 4b. Reason via the (free) LLM: decide stake size = confidence. Stance is assigned.
+      // 4a. Always buy the cheapest base signal (health).
+      await buySignal("health");
+
+      // 4b. Triage on the cheap signal: the agent itself decides how much MORE paid evidence to buy
+      //     and its stake size. Buying deeper, costlier signals AND a larger stake is the costly
+      //     confidence signal (§6.1) — a hesitant agent saves the money and stakes small.
+      let buyHeadroom = true;
+      let buyLiquidity = false;
       let sizeWhole = 5;
       let rationale = "default size (LLM unavailable)";
       try {
-        const decision = await llmJSON<{ sizeUsdc: number; rationale: string }>({
+        const d = await llmJSON<{ buyHeadroom: boolean; buyLiquidity: boolean; sizeUsdc: number; rationale: string }>({
           messages: [
             {
               role: "system",
               content:
-                "You are an adversarial DeFi liquidation-risk trader. Reply ONLY as JSON " +
-                `{"sizeUsdc":number,"rationale":string}. sizeUsdc must be 1..${TRADER_CAP}; larger = higher confidence.`,
+                "You are an adversarial DeFi liquidation-risk trader on a limited budget. You already bought the cheap " +
+                "health signal. Decide how much MORE paid evidence to buy (headroom $0.05, liquidity $0.10) and your stake. " +
+                `Reply ONLY as JSON {"buyHeadroom":boolean,"buyLiquidity":boolean,"sizeUsdc":number,"rationale":string}. ` +
+                `sizeUsdc is a whole number 1..${traderCap}. Buying deeper evidence and staking more signals higher ` +
+                "conviction; if your view is already clear from the health signal, save the money and stake small.",
             },
             {
               role: "user",
               content:
-                `Question: will Aave position P become LIQUIDATABLE by the deadline — i.e. will the collateral price cross the liquidation strike $${fmtPrice(strike)} (direction DOWN)? ` +
-                `Live price $${headroom.currentEthPrice.toFixed(2)}. Signals you just bought: ${JSON.stringify(signals)}. ` +
-                `Your assigned stance is ${t.side === "YES" ? "YES (LIQUIDATABLE)" : "NO (SAFE)"}. Pick your stake size.`,
+                `Question: will Aave position P become LIQUIDATABLE by the deadline — collateral price crosses the liquidation strike $${fmtPrice(strike)} (DOWN)? ` +
+                `Live price $${headroom.currentEthPrice.toFixed(2)}. Health signal you bought: ${JSON.stringify(signals.health)}. ` +
+                `Your assigned stance is ${t.side === "YES" ? "YES (LIQUIDATABLE)" : "NO (SAFE)"}.`,
             },
           ],
-          temperature: 0.3,
-          maxTokens: 220,
+          temperature: 0.6,
+          maxTokens: 240,
         });
-        sizeWhole = Math.max(1, Math.min(TRADER_CAP, Math.round(decision.sizeUsdc)));
-        rationale = decision.rationale;
+        buyHeadroom = !!d.buyHeadroom;
+        buyLiquidity = !!d.buyLiquidity;
+        sizeWhole = Math.max(1, Math.min(traderCap, Math.round(d.sizeUsdc)));
+        rationale = d.rationale;
       } catch {
-        /* keep default */
+        /* keep defaults */
       }
+
+      // 4c. Buy the escalated tiers the agent chose to pay for.
+      if (buyHeadroom) await buySignal("headroom");
+      if (buyLiquidity) await buySignal("liquidity");
+
       emit({ kind: "agent:decision", agent: t.role, stance: t.side, sizeUsdc: String(sizeWhole), rationale });
 
       // 4c. Stake via the 1Shot relayer (gas in USDC, no ETH).

@@ -22,6 +22,9 @@ packages/contracts/broadcast/
 #   cd packages/contracts && forge install smartcontractkit/chainlink-brownie-contracts OpenZeppelin/openzeppelin-contracts foundry-rs/forge-std --no-commit
 packages/contracts/lib/
 
+# event hub's last-round cache (regenerated each round)
+packages/agents/.data/
+
 # logs
 *.log
 npm-debug.log*
@@ -29,6 +32,9 @@ bun-debug.log*
 
 # internal build spec — keep out of git (planning/source-of-truth doc, not shipped)
 CONSOLIUM_BUILD.MD
+
+# internal deploy notes — keep out of git
+DEPLOY.md
 
 # misc
 .brand-preview/

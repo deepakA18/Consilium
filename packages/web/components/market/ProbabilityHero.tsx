@@ -29,7 +29,7 @@ export function ProbabilityHero({ round }: { round: RoundVM }) {
   const { yesPct, noPct } = round;
 
   return (
-    <section className="relative overflow-hidden rounded-3xl bg-[radial-gradient(130%_150%_at_85%_-30%,oklch(0.24_0_0)_0%,oklch(0.11_0_0)_60%)] p-8 text-white shadow-[0_20px_50px_-24px_oklch(0_0_0/0.6)]">
+    <section className="relative overflow-hidden rounded-3xl bg-[radial-gradient(130%_150%_at_85%_-30%,oklch(0.24_0_0)_0%,oklch(0.11_0_0)_60%)] p-5 text-white shadow-[0_20px_50px_-24px_oklch(0_0_0/0.6)] sm:p-8">
       <div className="relative flex items-start justify-between">
         <div className="text-[13px] font-medium text-white/55">Published probability</div>
         <svg viewBox="0 0 80 28" className="h-7 w-20">
@@ -37,9 +37,9 @@ export function ProbabilityHero({ round }: { round: RoundVM }) {
         </svg>
       </div>
 
-      <div className="relative mt-5 flex items-end justify-between gap-4">
+      <div className="relative mt-5 flex flex-wrap items-end justify-between gap-4">
         <div className="flex items-end gap-3">
-          <div className="text-5xl font-bold tabular-nums leading-none tracking-tight" style={{ color: GREEN }}>
+          <div className="text-4xl font-bold tabular-nums leading-none tracking-tight sm:text-5xl" style={{ color: GREEN }}>
             {yesPct}%
           </div>
           <div className="mb-1">
@@ -47,15 +47,17 @@ export function ProbabilityHero({ round }: { round: RoundVM }) {
           </div>
         </div>
 
-        <div className="flex shrink-0 gap-2.5">
-          <a
-            href={txUrl(round.resolution.txHash)}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-xs font-semibold text-black transition-opacity hover:opacity-90"
-          >
-            Resolve tx <ArrowUpRight className="size-3.5" />
-          </a>
+        <div className="flex shrink-0 flex-wrap gap-2.5">
+          {round.resolution.txHash && (
+            <a
+              href={txUrl(round.resolution.txHash)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-xs font-semibold text-black transition-opacity hover:opacity-90"
+            >
+              Resolve tx <ArrowUpRight className="size-3.5" />
+            </a>
+          )}
           <a
             href={addressUrl(round.market)}
             target="_blank"

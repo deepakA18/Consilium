@@ -28,7 +28,7 @@ export function Hero() {
         {/* centerpiece */}
         <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
           <h1
-            className="rise-in max-w-5xl text-balance font-display text-6xl font-bold leading-[0.92] tracking-[-0.03em] sm:text-7xl lg:text-8xl"
+            className="rise-in max-w-5xl text-balance font-display text-4xl font-bold leading-[0.96] tracking-[-0.03em] sm:text-6xl lg:text-8xl sm:leading-[0.92]"
             style={{ animationDelay: "0.1s" }}
           >
             <span className="text-shimmer">Liquidation risk,</span>

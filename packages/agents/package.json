@@ -16,6 +16,9 @@
     "oneshot:smoke": "bun --env-file=../../.env run src/smoke/oneshot.ts",
     "relay:stake": "bun --env-file=../../.env run src/smoke/relay-stake.ts",
     "round:run": "bun --env-file=../../.env run src/roundRunner.ts",
+    "events": "bun --env-file=../../.env run src/eventServer.ts",
+    "start": "bun run src/eventServer.ts",
+    "oracle:smoke": "bun --env-file=../../.env run src/smoke/oracle.ts",
     "demo:overcap": "bun --env-file=../../.env run src/smoke/overcap.ts"
   },
   "dependencies": {

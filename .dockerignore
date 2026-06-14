@@ -1,0 +1,15 @@
+.git
+**/node_modules
+**/.next
+packages/contracts/lib
+packages/contracts/out
+packages/contracts/cache
+packages/contracts/broadcast
+packages/agents/.data
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+CONSOLIUM_BUILD.MD
+.brand-preview
