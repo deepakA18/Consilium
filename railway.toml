@@ -1,0 +1,17 @@
+# Railway service config for the Consilium event hub (the long-running, keyed round runner + SSE +
+# research/oracle endpoints). One service only; the web app deploys to Vercel, not here.
+#
+# IMPORTANT: this service's Root Directory must be the REPO ROOT (leave it blank in Railway), because
+# the Dockerfile copies the root package.json + bun.lock and every workspace manifest to install the
+# bun workspace. Pointing the service at packages/agents would break the build context.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "bun run packages/agents/src/eventServer.ts"
+healthcheckPath = "/healthz"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
