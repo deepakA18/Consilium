@@ -9,6 +9,7 @@ import { WalletButton } from "@/components/WalletButton";
 import { GrantDialog } from "@/components/market/GrantDialog";
 import { useGrant } from "@/lib/use-grant";
 import { addressUrl, shortAddr } from "@/lib/explorer";
+import { cn } from "@/lib/utils";
 import { MarketSidebar } from "@/components/market/MarketSidebar";
 import { ProbabilityHero } from "@/components/market/ProbabilityHero";
 import { MetricCards } from "@/components/market/MetricCards";
@@ -24,12 +25,14 @@ import { useLiveRound, runLiveRound, type LiveStatus } from "@/lib/use-live-roun
 export function LiveMarket() {
   const { round: live, status, running } = useLiveRound();
   const { isConnected } = useAccount();
-  const { grant, granting, granted, error: grantError } = useGrant();
+  const { grant, granting, granted, error: grantError, reset: resetGrant } = useGrant();
   const [starting, setStarting] = useState(false);
   const [grantOpen, setGrantOpen] = useState(false);
   async function handleRun() {
     setStarting(true);
-    await runLiveRound();
+    const ok = await runLiveRound();
+    // The hub consumes the grant for this round; require a fresh signature before the next one.
+    if (ok) resetGrant();
     setTimeout(() => setStarting(false), 4000); // events take over from here
   }
 
@@ -173,14 +176,7 @@ function RunControls({
   onRun: () => void;
   onGrant: () => void;
 }) {
-  if (round && round.state === "resolved") {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-yes/15 px-3 py-1.5 text-[11px] font-semibold text-yes">
-        <span className="size-1.5 rounded-full bg-yes" />
-        Resolved · {SIDE_LABEL[round.resolution.outcome]}
-      </span>
-    );
-  }
+  // A round is in flight — nothing to do but watch.
   if (running) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-pending/15 px-3 py-1.5 text-[11px] font-semibold text-pending">
@@ -189,38 +185,52 @@ function RunControls({
       </span>
     );
   }
-  if (!isConnected) {
-    return (
-      <button
-        disabled
-        title="Connect a wallet to grant the budget and run a round"
-        className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-primary-foreground opacity-50"
-      >
+
+  const resolved = round?.state === "resolved";
+  const btn =
+    "inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50";
+
+  // The grant is consumed per round, so after one resolves `granted` is reset and the flow returns to
+  // Grant → Run for the next round. `starting` bridges the gap between firing a run and the first
+  // event arriving, so the button doesn't flicker back to "Grant budget" mid-launch.
+  let action: React.ReactNode;
+  if (starting) {
+    action = (
+      <button disabled className={cn(btn, "opacity-70")}>
+        <Loader2 className="size-3.5 animate-spin" /> Starting…
+      </button>
+    );
+  } else if (!isConnected) {
+    action = (
+      <button disabled title="Connect a wallet to grant the budget and run a round" className={cn(btn, "opacity-50")}>
         <Play className="size-3.5" /> Connect wallet to run
       </button>
     );
-  }
-  if (!granted) {
-    return (
-      <button
-        onClick={onGrant}
-        disabled={status !== "connected"}
-        title="Delegate a USDC budget to the fund-manager"
-        className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-      >
-        <PenLine className="size-3.5" /> Grant budget
+  } else if (!granted) {
+    action = (
+      <button onClick={onGrant} disabled={status !== "connected"} title="Delegate a USDC budget to the fund-manager" className={btn}>
+        <PenLine className="size-3.5" /> {resolved ? "Grant to run again" : "Grant budget"}
+      </button>
+    );
+  } else {
+    action = (
+      <button onClick={onRun} disabled={status !== "connected"} className={btn}>
+        <Play className="size-3.5" />
+        {status === "connected" ? (resolved ? "Run another round" : "Run live round") : status === "connecting" ? "Connecting…" : "Hub offline"}
       </button>
     );
   }
+
   return (
-    <button
-      onClick={onRun}
-      disabled={starting || status !== "connected"}
-      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-    >
-      {starting ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-      {status === "connected" ? (starting ? "Starting…" : "Run live round") : status === "connecting" ? "Connecting…" : "Hub offline"}
-    </button>
+    <>
+      {resolved && round && (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-yes/15 px-3 py-1.5 text-[11px] font-semibold text-yes">
+          <span className="size-1.5 rounded-full bg-yes" />
+          Resolved · {SIDE_LABEL[round.resolution.outcome]}
+        </span>
+      )}
+      {action}
+    </>
   );
 }
 

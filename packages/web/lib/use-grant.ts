@@ -71,5 +71,9 @@ export function useGrant() {
     }
   }
 
-  return { grant, granting, granted: grantedBy != null && grantedBy === address, error };
+  // The hub consumes a grant per round, so callers reset after firing a round to force a fresh
+  // signature for the next one (otherwise the UI would offer "Run" against an already-spent grant).
+  const reset = () => setGrantedBy(null);
+
+  return { grant, granting, granted: grantedBy != null && grantedBy === address, error, reset };
 }
